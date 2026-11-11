@@ -30,7 +30,7 @@ Maven adds Xerial SQLite JDBC, so complaint records persist in `data/campusfix.d
 
 From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixApp`.
 
-> No JDK installation is bundled. If `javac` is not recognized, install JDK 17 or later and add it to PATH. On Windows, run these commands from the project directory rather than double-clicking the `java` file.
+> No JDK installation is bundled. The scripts prefer the JDK configured by `JAVA_HOME`, then fall back to `java` and `javac` on `PATH`. Ensure the selected JDK is version 17 or later. On Windows, run these commands from the project directory rather than double-clicking the `java` file.
 
 ## Demo sign-in
 
@@ -46,9 +46,10 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 
 ## Core features
 
-- Role-specific login, dashboards, and visibility restrictions.
+- Polished role-specific dashboards with sidebar navigation, responsive cards, status badges, and consistent native Swing styling.
 - Student complaint submission with title, location, description, category, and severity.
 - Administrator assignment of technicians with least-active-ticket recommendation.
+- Live administrator analytics and technician workload views calculated from stored complaint data.
 - Valid state sequence: **OPEN → ASSIGNED → IN_PROGRESS → RESOLVED**.
 - Priority score out of 100, based on severity, issue category, and waiting time.
 - Table search, status filters, resolved-ticket counts, and outstanding-work queue.
