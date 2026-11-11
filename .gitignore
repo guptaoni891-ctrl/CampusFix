@@ -1,0 +1,12 @@
+out/
+target/
+data/*
+!data/.gitkeep
+*.class
+*.db
+*.db-*
+*.tsv
+*.csv
+*.log
+.idea/
+.vscode/

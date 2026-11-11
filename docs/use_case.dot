@@ -1,0 +1,20 @@
+digraph usecases {
+  graph [rankdir=LR, bgcolor="white", pad=.24, nodesep=.6, ranksep=.75];
+  node [fontname="DejaVu Sans", fontsize=12]; edge [color="#63758a", arrowsize=.7];
+  Student [shape=box, style="rounded,filled", fillcolor="#dbeafe", color="#93c5fd"];
+  Technician [shape=box, style="rounded,filled", fillcolor="#dcfce7", color="#86efac"];
+  Admin [shape=box, style="rounded,filled", fillcolor="#f3e8ff", color="#c4b5fd"];
+  subgraph cluster_system {
+    label="CampusFix System"; color="#cbd5e1"; style="rounded";
+    Login [shape=ellipse,label="Sign in"];
+    Submit [shape=ellipse,label="Submit complaint"];
+    View [shape=ellipse,label="View assigned / own tickets"];
+    Assign [shape=ellipse,label="Assign technician"];
+    Change [shape=ellipse,label="Update ticket status"];
+    Export [shape=ellipse,label="Export CSV report"];
+    Analyze [shape=ellipse,label="View dashboard & queue"];
+  }
+  Student -> Login; Student -> Submit; Student -> View;
+  Technician -> Login; Technician -> View; Technician -> Change;
+  Admin -> Login; Admin -> Assign; Admin -> Change; Admin -> Export; Admin -> Analyze; Admin -> View;
+}

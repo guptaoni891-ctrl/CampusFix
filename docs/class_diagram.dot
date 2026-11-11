@@ -1,0 +1,20 @@
+digraph uml {
+ graph [rankdir=TB,bgcolor="white",pad=.35,nodesep=.35,ranksep=.8,splines=polyline];
+ node [shape=record,fontname="DejaVu Sans",fontsize=10,color="#94a3b8",style="filled",fillcolor="#f8fafc"];
+ edge [fontname="DejaVu Sans",fontsize=9,color="#64748b",arrowsize=.8];
+ User [label="{User (abstract)|-id:String\l-name:String\l-username:String\l|+getRole(): Role\l+getDisplayName():String\l}",fillcolor="#dbeafe"];
+ Student [label="{Student|+getRole():Role\l}"];
+ Technician [label="{Technician|-specialty:String\l|+getRole():Role\l}"];
+ Administrator [label="{Administrator|+getRole():Role\l}"];
+ Complaint [label="{Complaint|-id:int\l-studentId:String\l-title:String\l-category:Category\l-severity:Severity\l-status:Status\l-technicianId:String\l|+assignTo(id):void\l+moveTo(status):void\l+copy():Complaint\l}",fillcolor="#dbeafe"];
+ Repo [label="{TicketRepository (interface)|+findAll():List\l+nextId():int\l+save(c):void\l}",fillcolor="#fef3c7"];
+ SQL [label="{SqliteTicketRepository|+findAll()\l+save(c)\l}"];
+ File [label="{FileTicketRepository|+findAll()\l+save(c)\l}"];
+ Priority [label="{PriorityScorer (interface)|+score(c,now):int\l}",fillcolor="#fef3c7"];
+ Weighted [label="{WeightedPriorityScorer|+score(c,now):int\l}"];
+ Service [label="{ComplaintService|-repository:TicketRepository\l-scorer:PriorityScorer\l|+create(...):Complaint\l+assign(...):void\l+changeStatus(...):void\l+urgentQueue():List\l}",fillcolor="#dcfce7"];
+ Frame [label="{CampusFixFrame|+demoLogin(username):void\l-refresh():void\l}"];
+ Student->User [arrowhead=empty];Technician->User [arrowhead=empty];Administrator->User [arrowhead=empty];
+ SQL->Repo [arrowhead=empty,style=dashed];File->Repo [arrowhead=empty,style=dashed];Weighted->Priority [arrowhead=empty,style=dashed];
+ Service->Repo [label="uses",arrowhead=vee];Service->Priority [label="uses",arrowhead=vee];Service->Complaint [label="manages",arrowhead=vee];Frame->Service [label="calls",arrowhead=vee];
+}
