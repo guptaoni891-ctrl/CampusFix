@@ -29,11 +29,13 @@ Keep business rules out of Swing event handlers. UI code should call services; s
 
 ## Data safety and compatibility
 
-- Treat `data/complaints.tsv`, `data/campusfix.db`, and their sidecar files as user data. Never delete, truncate, rewrite, seed over, or use them in tests.
+- Treat `data/complaints.tsv`, `data/events.tsv`, `data/campusfix.db`, and their sidecar files as user data. Never delete, truncate, rewrite, seed over, or use them in tests.
 - Tests must use a temporary directory and clean up only that exact temporary directory.
 - File records currently contain 12 Base64-encoded tab-separated fields and the version marker `v1`. Preserve support for existing `v1` records when evolving the schema.
+- Activity records are stored separately as seven Base64-encoded tab-separated fields in `events.tsv`, also marked `v1`; never invent events for complaints that predate activity tracking.
 - SQLite schema changes must be additive or use an explicit migration. Never drop the complaints table as part of application startup.
 - Keep writes atomic where practical. A failed save must not replace a valid data file with partial content.
+- Complaint and event file replacements are individually safe but are not a cross-file transaction. Surface partial-write failures honestly rather than claiming atomicity.
 - Do not silently fabricate missing domain values during migration; use documented defaults only when their meaning is safe and clear.
 
 ## Build and test commands
@@ -76,6 +78,7 @@ At minimum, verification for a change must include compilation of all main and t
 - Avoid broad `catch (RuntimeException)` in new UI code when a specific validation or persistence exception can be handled.
 - Perform potentially slow persistence and export work without freezing the Swing event-dispatch thread when the operation can be noticeable.
 - Keep role visibility and authorization separate: hiding a button is not a security check.
+- Enforce ticket-history visibility, comment ownership, technician assignment, and mandatory resolution notes in `ComplaintService`, not in Swing components.
 - Use prepared statements for all SQL values and transactions for multi-step database changes.
 
 ## Definition of done

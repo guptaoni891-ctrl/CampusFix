@@ -12,8 +12,9 @@ public final class SmokeTest {
         Path dir=Files.createTempDirectory("campusfix-test-");
         try{
             FileTicketRepository repo=new FileTicketRepository(dir.resolve("test.tsv"));
+            FileTicketEventRepository eventRepo=new FileTicketEventRepository(dir.resolve("events.tsv"));
             UserDirectory users=new UserDirectory();
-            ComplaintService svc=new ComplaintService(repo,users,new WeightedPriorityScorer());
+            ComplaintService svc=new ComplaintService(repo,eventRepo,users,new WeightedPriorityScorer());
             User student=users.login("student","demo123"), admin=users.login("admin","demo123"), tech=users.login("tech","demo123");
             require(student instanceof Student,"Inheritance: expected Student");
             expectFailure(()->users.login("admin","bad"));
@@ -28,7 +29,7 @@ public final class SmokeTest {
             expectFailure(()->svc.changeStatus(student,first.getId(),Status.IN_PROGRESS));
             expectFailure(()->svc.changeStatus(tech,first.getId(),Status.RESOLVED));
             svc.changeStatus(tech,first.getId(),Status.IN_PROGRESS);
-            svc.changeStatus(tech,first.getId(),Status.RESOLVED);
+            svc.changeStatus(tech,first.getId(),Status.RESOLVED,"Replaced the failed light fixture and verified operation.");
             require(svc.visibleTo(student).get(0).getStatus()==Status.RESOLVED,"Resolved transition");
             require(new FileTicketRepository(dir.resolve("test.tsv")).findAll().size()==1,"Persistence after restart");
             Complaint low=new Complaint(88,"S01","Network issue","Slow WiFi","Hall A",Category.INTERNET,Severity.LOW,LocalDateTime.now(),Status.OPEN,null,LocalDateTime.now());
@@ -38,6 +39,7 @@ public final class SmokeTest {
             Path csv=dir.resolve("export.csv");CsvExporter.export(csv,svc.all(),scorer);
             require(Files.readString(csv).contains("Broken light fixture"),"CSV export");
             System.out.println("PASS: login, inheritance, validation, permissions, assignment, transitions, file persistence, priority scoring, CSV export");
+            TicketEventTest.run();
         }finally{
             try(var stream=Files.walk(dir)){stream.sorted(java.util.Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(Exception ignored){}});}
         }

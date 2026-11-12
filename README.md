@@ -18,7 +18,7 @@ On **macOS or Linux**, run:
 ./run.sh
 ```
 
-These scripts compile and launch the **fully working offline file-storage mode** with no external libraries. The first launch automatically creates six sample tickets in `data/complaints.tsv`. In this mode, all new changes survive restarts.
+These scripts compile and launch the **fully working offline file-storage mode** with no external libraries. The first launch automatically creates six sample tickets in `data/complaints.tsv`. Complaint activity is stored separately in `data/events.tsv`, preserving compatibility with existing 12-field `v1` complaint records. In this mode, all new changes survive restarts.
 
 To run the **SQLite database edition** (requires **Apache Maven** and an Internet connection for the first download of dependencies):
 
@@ -26,7 +26,7 @@ To run the **SQLite database edition** (requires **Apache Maven** and an Interne
 mvn compile exec:java
 ```
 
-Maven adds Xerial SQLite JDBC, so complaint records persist in `data/campusfix.db`. The app attempts SQLite first and shows the storage mode at the bottom of the dashboard. If the JDBC driver is missing, it falls back to local file storage and logs the reason. The two storage modes use separate persistent data files.
+Maven adds Xerial SQLite JDBC, so complaint records and the additive `complaint_events` table persist in `data/campusfix.db`. The app attempts SQLite first and shows the storage mode at the bottom of the dashboard. If either SQLite repository is unavailable, it falls back to local file storage and logs the reason. The two storage modes use separate persistent data files.
 
 From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixApp`.
 
@@ -51,9 +51,11 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 - Administrator assignment of technicians with least-active-ticket recommendation.
 - Live administrator analytics and technician workload views calculated from stored complaint data.
 - Valid state sequence: **OPEN → ASSIGNED → IN_PROGRESS → RESOLVED**.
+- Detailed ticket views with full metadata, status progression, and chronological activity timelines.
+- Authorized student/admin comments, technician progress notes, and mandatory resolution notes.
 - Priority score out of 100, based on severity, issue category, and waiting time.
 - Table search, status filters, resolved-ticket counts, and outstanding-work queue.
-- JDBC SQLite persistence or atomic local-file persistence.
+- JDBC SQLite persistence or versioned local-file persistence for tickets and activity events.
 - CSV export, correctly quoting commas, quotes, and line breaks.
 - Exception handling for invalid permissions and invalid workflow transitions.
 
@@ -63,25 +65,26 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 | --- | --- |
 | Inheritance / polymorphism | Abstract `User` and three derived role classes |
 | Encapsulation | Private model fields with controlled mutation |
-| Interfaces | `TicketRepository`, `PriorityScorer`, `TicketListener` |
+| Interfaces | `TicketRepository`, `TicketEventRepository`, `PriorityScorer`, `TicketListener` |
 | Exceptions | `ValidationException`, persistence exception wrapping |
 | Collections | `ArrayList`, `Map`, `PriorityQueue`, streams |
 | GUI and events | `JFrame`, `JTable`, Swing dialogs, listeners |
-| File handling | `FileTicketRepository`, `CsvExporter` |
-| JDBC and SQLite | `SqliteTicketRepository`, prepared statements, schema creation |
+| File handling | `FileTicketRepository`, `FileTicketEventRepository`, `CsvExporter` |
+| JDBC and SQLite | Ticket and event repositories, prepared statements, additive schema creation |
 
 ## Source organization
 
 ```text
 src/main/java/com/campusfix/
 ├── CampusFixApp.java
-├── model/          # User hierarchy, Complaint, enums
-├── service/        # Authentication, priority scores, permissions, seeding
-├── persistence/    # Repository interface, SQLite and file implementations
-├── ui/             # Swing desktop interface
+├── model/          # User hierarchy, complaints, ticket events, enums
+├── service/        # Authentication, workflow, history authorization, scoring
+├── persistence/    # Ticket/event repositories for file and SQLite modes
+├── ui/             # Swing dashboard, details dialog, timeline components
 └── util/           # CSV exporter
 src/test/java/com/campusfix/
 ├── SmokeTest.java  # Automated functional tests
+├── TicketEventTest.java  # Activity, authorization, compatibility, persistence tests
 └── CaptureScreens.java  # Real-GUI screenshot capture utility
 ```
 
@@ -99,16 +102,19 @@ Windows:
 .\test.bat
 ```
 
-The test suite validates login, inheritance, permissions, invalid inputs, ticket creation and assignment, state-transition rules, persistence across repository reload, priority scoring, and CSV export. **SQLite-specific integration tests are not included**; this would be a valuable extension for the team.
+The test suite validates login, inheritance, permissions, invalid inputs, ticket creation and assignment, state transitions, comments, progress and resolution notes, chronological event retrieval, malformed-event failures, persistence reloads, legacy `v1` compatibility, priority scoring, and CSV export. SQLite event integration runs automatically when the JDBC driver is on the test classpath; the offline scripts explicitly report it as `NOT VERIFIED` otherwise.
+
+The offline complaint file and activity file are each replaced safely, but updating a complaint and appending its event are two separate writes and are not presented as a cross-file transaction. If the second write fails, the service reports that the complaint changed but its activity could not be recorded.
 
 ## Demonstration in 5–10 minutes
 
 1. Log in as `student`, submit a new maintenance issue, and show its initial OPEN status.
 2. Switch to `admin` to see the new item in the global queue. Explain the priority score.
 3. Select the row, assign a technician, and check the updated status.
-4. Switch to `tech` or `tech2` as appropriate. Advance the assigned ticket to IN_PROGRESS and RESOLVED.
-5. Switch to `admin` again to show dashboard totals and CSV export. Reopen the app to demonstrate persistence.
-6. Explain UML diagram, abstract `User` class, interfaces, exception handling, and database repository.
+4. Open the full ticket view to show its status progression and assignment event.
+5. Switch to `tech` or `tech2`, add a progress note, advance the ticket, and enter the required resolution note.
+6. Switch to `admin` again to review the complete activity timeline, dashboard totals, and CSV export. Reopen the app to demonstrate persistence.
+7. Explain the `User` hierarchy, ticket/event repository interfaces, service authorization, and legacy-compatible storage.
 
 ## Report and diagrams
 
@@ -131,4 +137,4 @@ The report was formatted with Times New Roman 12-point body text, 14-point headi
 
 ### Future improvements
 
-Real sign-up with hashed passwords, institutional authentication, REST API, concurrent access, notification emails, attachments, technician specializations, and full automated JDBC integration tests.
+Real sign-up with hashed passwords, institutional authentication, REST API, concurrent multi-file transactions, notification emails, attachments, technician specializations, and JDBC integration in a dependency-enabled CI build.

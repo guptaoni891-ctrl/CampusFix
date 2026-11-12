@@ -13,10 +13,13 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -47,11 +50,13 @@ public final class ComplaintTablePanel extends RoundedPanel {
     private final JComboBox<String> statusFilter = new JComboBox<>(
         new String[]{"All statuses", "Open", "Assigned", "In progress", "Resolved"});
     private final JTextArea details = new JTextArea();
+    private final ModernButton openDetails = Style.secondary("Open full ticket");
     private final JPanel tableCards = new JPanel(new CardLayout());
     private final JLabel emptyTitle = Style.label("No complaints to show", 15, true);
     private final JLabel emptyMessage = Style.label("Try another search or status filter.", 12, false);
     private List<Complaint> source = List.of();
     private List<Complaint> filtered = new ArrayList<>();
+    private Consumer<Complaint> openDetailsAction;
 
     public ComplaintTablePanel(String title, ComplaintService service, UserDirectory directory) {
         super(new BorderLayout(0, 14), 18);
@@ -97,11 +102,23 @@ public final class ComplaintTablePanel extends RoundedPanel {
         table.getSelectionModel().addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) updateDetails();
         });
+        table.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2) openSelectedDetails();
+            }
+        });
+        openDetails.setEnabled(false);
+        openDetails.setToolTipText("Open metadata, activity history, comments, and progress notes");
+        openDetails.addActionListener(event -> openSelectedDetails());
     }
 
     public void setComplaints(List<Complaint> complaints) {
         source = List.copyOf(complaints);
         refreshRows();
+    }
+
+    public void setOpenDetailsAction(Consumer<Complaint> action) {
+        openDetailsAction = action;
     }
 
     public Complaint selectedComplaint() {
@@ -209,6 +226,10 @@ public final class ComplaintTablePanel extends RoundedPanel {
         details.setWrapStyleWord(true);
         details.setRows(3);
         panel.add(details, BorderLayout.CENTER);
+        JPanel action = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        action.setOpaque(false);
+        action.add(openDetails);
+        panel.add(action, BorderLayout.EAST);
         return panel;
     }
 
@@ -240,6 +261,7 @@ public final class ComplaintTablePanel extends RoundedPanel {
             layout.show(tableCards, TABLE_CARD);
         }
         details.setText("Select a complaint to view its description, reporter, and latest activity.");
+        openDetails.setEnabled(false);
     }
 
     private String searchableText(Complaint complaint) {
@@ -251,8 +273,10 @@ public final class ComplaintTablePanel extends RoundedPanel {
         Complaint complaint = selectedComplaint();
         if (complaint == null) {
             details.setText("Select a complaint to view its description, reporter, and latest activity.");
+            openDetails.setEnabled(false);
             return;
         }
+        openDetails.setEnabled(true);
         User student = directory.byId(complaint.getStudentId());
         String reporter = student == null ? complaint.getStudentId() : student.getName();
         details.setText("Ticket #" + complaint.getId() + "  •  Reported by " + reporter
@@ -260,6 +284,11 @@ public final class ComplaintTablePanel extends RoundedPanel {
             + complaint.getDescription() + "\n" + complaint.getLocation()
             + "  •  Updated " + date.format(complaint.getUpdatedAt()));
         details.setCaretPosition(0);
+    }
+
+    private void openSelectedDetails() {
+        Complaint complaint = selectedComplaint();
+        if (complaint != null && openDetailsAction != null) openDetailsAction.accept(complaint);
     }
 
     private static String friendly(String value) {

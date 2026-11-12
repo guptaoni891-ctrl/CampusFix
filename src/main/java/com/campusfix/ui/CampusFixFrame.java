@@ -399,6 +399,7 @@ public final class CampusFixFrame extends JFrame {
 
         ComplaintTablePanel snapshot = new ComplaintTablePanel("Priority snapshot", service, directory);
         snapshot.setComplaints(tickets);
+        snapshot.setOpenDetailsAction(this::openComplaintDetails);
         page.add(snapshot, BorderLayout.CENTER);
         return page;
     }
@@ -462,6 +463,7 @@ public final class CampusFixFrame extends JFrame {
         page.add(complaintActions(), BorderLayout.NORTH);
         currentTable = new ComplaintTablePanel(title, service, directory);
         currentTable.setComplaints(service.visibleTo(currentUser).stream().filter(pageFilter).toList());
+        currentTable.setOpenDetailsAction(this::openComplaintDetails);
         page.add(currentTable, BorderLayout.CENTER);
         return page;
     }
@@ -851,20 +853,48 @@ public final class CampusFixFrame extends JFrame {
             showError("This ticket must be ASSIGNED or IN PROGRESS before it can advance.");
             return;
         }
-        int answer = JOptionPane.showConfirmDialog(this,
-            "Move ticket #" + complaint.getId() + " from " + friendly(complaint.getStatus().name())
-                + " to " + friendly(next.name()) + "?",
-            "Confirm status change", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-        if (answer == JOptionPane.YES_OPTION) {
-            try {
-                service.changeStatus(currentUser, complaint.getId(), next);
-                showSuccess("Ticket #" + complaint.getId() + " moved to " + friendly(next.name()) + ".");
-            } catch (ValidationException exception) {
-                showError(exception.getMessage());
-            } catch (IllegalStateException exception) {
-                showError("The status change could not be saved. " + exception.getMessage());
-            }
+        String resolutionNote = null;
+        if (next == Status.RESOLVED) {
+            resolutionNote = requestResolutionNote(complaint.getId());
+            if (resolutionNote == null) return;
+        } else {
+            int answer = JOptionPane.showConfirmDialog(this,
+                "Move ticket #" + complaint.getId() + " from " + friendly(complaint.getStatus().name())
+                    + " to " + friendly(next.name()) + "?",
+                "Confirm status change", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (answer != JOptionPane.YES_OPTION) return;
         }
+        try {
+            service.changeStatus(currentUser, complaint.getId(), next, resolutionNote);
+            showSuccess("Ticket #" + complaint.getId() + " moved to " + friendly(next.name()) + ".");
+        } catch (ValidationException exception) {
+            showError(exception.getMessage());
+        } catch (IllegalStateException exception) {
+            showError("The status change could not be saved. " + exception.getMessage());
+        }
+    }
+
+    private void openComplaintDetails(Complaint complaint) {
+        ComplaintDetailDialog.open(this, service, directory, currentUser, complaint.getId(),
+            () -> showPage(currentPage));
+    }
+
+    private String requestResolutionNote(int complaintId) {
+        JTextArea note = new JTextArea(5, 34);
+        note.setLineWrap(true);
+        note.setWrapStyleWord(true);
+        Style.field(note);
+        JPanel prompt = new JPanel(new BorderLayout(0, 9));
+        prompt.add(Style.label("Resolution note (required)", 13, true), BorderLayout.NORTH);
+        JLabel hint = Style.label("Describe the completed repair and verification in at least 10 characters.", 11, false);
+        hint.setForeground(Style.MUTED);
+        prompt.add(hint, BorderLayout.CENTER);
+        JScrollPane scroll = new JScrollPane(note);
+        scroll.setBorder(BorderFactory.createLineBorder(Style.BORDER));
+        prompt.add(scroll, BorderLayout.SOUTH);
+        int answer = JOptionPane.showConfirmDialog(this, prompt, "Resolve ticket #" + complaintId,
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        return answer == JOptionPane.OK_OPTION ? note.getText() : null;
     }
 
     private Complaint selectedComplaint() {
