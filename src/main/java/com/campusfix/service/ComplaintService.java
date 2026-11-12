@@ -29,6 +29,8 @@ public final class ComplaintService {
     private final UserDirectory directory;
     private final PriorityScorer scorer;
     private final Clock clock;
+    private final SlaService slaService;
+    private final TechnicianRecommendationService recommendationService;
     private final List<TicketListener> listeners = new ArrayList<>();
 
     /** Backwards-compatible constructor used by tools that do not require durable event history. */
@@ -43,11 +45,22 @@ public final class ComplaintService {
 
     public ComplaintService(TicketRepository repository, TicketEventRepository eventRepository,
                             UserDirectory directory, PriorityScorer scorer, Clock clock) {
+        this(repository, eventRepository, directory, scorer, clock,
+            new SlaService(new StandardSlaPolicy(), clock),
+            new TechnicianRecommendationService(repository, directory, new KeywordSpecializationMatcher()));
+    }
+
+    public ComplaintService(TicketRepository repository, TicketEventRepository eventRepository,
+                            UserDirectory directory, PriorityScorer scorer, Clock clock,
+                            SlaService slaService,
+                            TechnicianRecommendationService recommendationService) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.eventRepository = Objects.requireNonNull(eventRepository, "eventRepository");
         this.directory = Objects.requireNonNull(directory, "directory");
         this.scorer = Objects.requireNonNull(scorer, "scorer");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.slaService = Objects.requireNonNull(slaService, "slaService");
+        this.recommendationService = Objects.requireNonNull(recommendationService, "recommendationService");
     }
 
     public String persistenceMode() { return repository.mode(); }
@@ -57,14 +70,28 @@ public final class ComplaintService {
     }
 
     public int score(Complaint complaint) {
-        return scorer.score(complaint, now());
+        return priorityFor(complaint).score();
+    }
+
+    public PriorityAssessment priorityFor(Complaint complaint) {
+        return scorer.assess(Objects.requireNonNull(complaint, "complaint"), now());
+    }
+
+    public SlaAssessment slaFor(Complaint complaint) {
+        Objects.requireNonNull(complaint, "complaint");
+        LocalDateTime resolvedAt = eventRepository.findByComplaintId(complaint.getId()).stream()
+            .filter(event -> event.getEventType() == TicketEventType.TICKET_RESOLVED)
+            .map(TicketEvent::getTimestamp)
+            .min(LocalDateTime::compareTo)
+            .orElse(null);
+        return slaService.assess(complaint, resolvedAt);
     }
 
     public List<Complaint> visibleTo(User user) {
         requireUser(user);
         return repository.findAll().stream()
             .filter(complaint -> canView(user, complaint))
-            .sorted(Comparator.comparingInt(this::score).reversed().thenComparing(Complaint::getCreatedAt))
+            .sorted(Comparator.comparing(this::priorityFor).reversed().thenComparing(Complaint::getCreatedAt))
             .toList();
     }
 
@@ -122,13 +149,14 @@ public final class ComplaintService {
         if (complaint.getStatus() == Status.RESOLVED) {
             throw new ValidationException("Resolved complaints cannot be reassigned.");
         }
-        boolean reassignment = complaint.getTechnicianId() != null;
+        String previousTechnicianId = complaint.getTechnicianId();
+        boolean reassignment = previousTechnicianId != null;
         LocalDateTime timestamp = now();
         complaint.assignTo(technician.getId(), timestamp);
         repository.save(complaint);
         recordAfterComplaintSave(complaint, actor,
             reassignment ? TicketEventType.TECHNICIAN_REASSIGNED : TicketEventType.TECHNICIAN_ASSIGNED,
-            technician.getId());
+            reassignment ? previousTechnicianId + "|" + technician.getId() : technician.getId());
         notifyListeners(complaint, reassignment ? "REASSIGNED" : "ASSIGNED");
     }
 
@@ -206,6 +234,24 @@ public final class ComplaintService {
         return directory.technicians().stream()
             .min(Comparator.comparingLong(technician -> workload.getOrDefault(technician.getId(), 0L)))
             .orElse(null);
+    }
+
+    public List<TechnicianRecommendation> recommendTechnicians(User actor, int ticketId) {
+        requireUser(actor);
+        if (actor.getRole() != Role.ADMIN) {
+            throw new ValidationException("Only administrators may request technician recommendations.");
+        }
+        Complaint complaint = requireTicket(ticketId);
+        if (complaint.getStatus() == Status.RESOLVED) {
+            throw new ValidationException("Resolved complaints do not need technician recommendations.");
+        }
+        return recommendationService.recommendationsFor(complaint);
+    }
+
+    public long overdueCount(User actor) {
+        requireUser(actor);
+        return visibleTo(actor).stream().map(this::slaFor)
+            .filter(assessment -> assessment.status() == SlaStatus.OVERDUE).count();
     }
 
     public List<Complaint> urgentQueue() {

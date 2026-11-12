@@ -6,6 +6,8 @@ import com.campusfix.model.Status;
 import com.campusfix.model.TicketEvent;
 import com.campusfix.model.User;
 import com.campusfix.service.ComplaintService;
+import com.campusfix.service.PriorityAssessment;
+import com.campusfix.service.SlaAssessment;
 import com.campusfix.service.UserDirectory;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -154,10 +156,16 @@ public final class ComplaintDetailDialog extends JDialog {
         badgeRow.setOpaque(false);
         badgeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
         badgeRow.add(new StatusBadge(ticket.getSeverity()));
-        JLabel priority = Style.label("Priority " + service.score(ticket) + "/100", 11, true);
-        priority.setForeground(service.score(ticket) >= 75 ? Style.RED : Style.TEAL_DARK);
+        PriorityAssessment priorityAssessment = service.priorityFor(ticket);
+        JLabel priority = Style.label("Priority " + priorityAssessment.score() + "/100", 11, true);
+        priority.setForeground(priorityAssessment.score() >= 75 ? Style.RED : Style.TEAL_DARK);
         badgeRow.add(priority);
         overview.add(badgeRow);
+        JTextArea priorityReason = readOnlyText(priorityAssessment.explanation());
+        priorityReason.setForeground(Style.MUTED);
+        priorityReason.setAlignmentX(Component.LEFT_ALIGNMENT);
+        overview.add(Box.createVerticalStrut(9));
+        overview.add(priorityReason);
         content.add(overview);
         content.add(Box.createVerticalStrut(12));
 
@@ -176,13 +184,17 @@ public final class ComplaintDetailDialog extends JDialog {
         details.add(Box.createVerticalStrut(12));
         User reporter = directory.byId(ticket.getStudentId());
         User technician = directory.byId(ticket.getTechnicianId());
+        SlaAssessment sla = service.slaFor(ticket);
         details.add(detailGrid(
             "Category", friendly(ticket.getCategory().name()),
             "Location", ticket.getLocation(),
             "Reporter", reporter == null ? ticket.getStudentId() : reporter.getName(),
             "Technician", technician == null ? "Not assigned" : technician.getName(),
             "Created", date.format(ticket.getCreatedAt()),
-            "Last updated", date.format(ticket.getUpdatedAt())));
+            "Last updated", date.format(ticket.getUpdatedAt()),
+            "SLA status", friendly(sla.status().name()),
+            "SLA deadline", date.format(sla.deadline()),
+            "SLA timing", sla.remainingText()));
         content.add(details);
         content.add(Box.createVerticalGlue());
 
@@ -378,7 +390,8 @@ public final class ComplaintDetailDialog extends JDialog {
     }
 
     private JPanel detailGrid(String... values) {
-        JPanel grid = new JPanel(new GridLayout(values.length / 4, 2, 14, 13));
+        int pairCount = values.length / 2;
+        JPanel grid = new JPanel(new GridLayout((pairCount + 1) / 2, 2, 14, 13));
         grid.setOpaque(false);
         for (int index = 0; index < values.length; index += 2) {
             JPanel cell = new JPanel();
@@ -453,9 +466,20 @@ public final class ComplaintDetailDialog extends JDialog {
         String note = event.getNote();
         return switch (event.getEventType()) {
             case TICKET_CREATED -> null;
-            case TECHNICIAN_ASSIGNED, TECHNICIAN_REASSIGNED -> {
+            case TECHNICIAN_ASSIGNED -> {
                 User technician = directory.byId(note);
                 yield technician == null ? "Assigned to " + note : "Assigned to " + technician.getName();
+            }
+            case TECHNICIAN_REASSIGNED -> {
+                if (note == null || !note.contains("|")) {
+                    User technician = directory.byId(note);
+                    yield technician == null ? "Reassigned to " + note : "Reassigned to " + technician.getName();
+                }
+                String[] assignment = note.split("\\|", 2);
+                User previous = directory.byId(assignment[0]);
+                User current = directory.byId(assignment[1]);
+                yield "Reassigned from " + (previous == null ? assignment[0] : previous.getName())
+                    + " to " + (current == null ? assignment[1] : current.getName());
             }
             case STATUS_CHANGED -> {
                 if (note == null || !note.contains("|")) yield note;

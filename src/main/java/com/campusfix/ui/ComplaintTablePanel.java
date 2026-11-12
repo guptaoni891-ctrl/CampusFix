@@ -3,6 +3,9 @@ package com.campusfix.ui;
 import com.campusfix.model.Complaint;
 import com.campusfix.model.User;
 import com.campusfix.service.ComplaintService;
+import com.campusfix.service.PriorityAssessment;
+import com.campusfix.service.SlaAssessment;
+import com.campusfix.service.SlaStatus;
 import com.campusfix.service.UserDirectory;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
@@ -49,6 +52,8 @@ public final class ComplaintTablePanel extends RoundedPanel {
     private final JTextField search = new PlaceholderTextField("Search complaints…", 17);
     private final JComboBox<String> statusFilter = new JComboBox<>(
         new String[]{"All statuses", "Open", "Assigned", "In progress", "Resolved"});
+    private final JComboBox<String> urgencyFilter = new JComboBox<>(
+        new String[]{"All SLA", "Overdue", "Due soon", "On track", "Resolved"});
     private final JTextArea details = new JTextArea();
     private final ModernButton openDetails = Style.secondary("Open full ticket");
     private final JPanel tableCards = new JPanel(new CardLayout());
@@ -66,14 +71,15 @@ public final class ComplaintTablePanel extends RoundedPanel {
         setBorder(new EmptyBorder(18, 18, 20, 18));
 
         add(toolbar(title), BorderLayout.NORTH);
-        String[] columns = {"ID", "TITLE", "CATEGORY", "SEVERITY", "LOCATION", "PRIORITY", "STATUS", "TECHNICIAN", "CREATED"};
+        String[] columns = {"ID", "TITLE", "CATEGORY", "SEVERITY", "LOCATION", "PRIORITY", "SLA", "STATUS", "TECHNICIAN", "CREATED"};
         model = new DefaultTableModel(columns, 0) {
             @Override public boolean isCellEditable(int row, int column) { return false; }
             @Override public Class<?> getColumnClass(int column) {
                 return switch (column) {
                     case 3 -> com.campusfix.model.Severity.class;
-                    case 5 -> Integer.class;
-                    case 6 -> com.campusfix.model.Status.class;
+                    case 5 -> PriorityAssessment.class;
+                    case 6 -> SlaAssessment.class;
+                    case 7 -> com.campusfix.model.Status.class;
                     default -> String.class;
                 };
             }
@@ -99,6 +105,7 @@ public final class ComplaintTablePanel extends RoundedPanel {
             @Override public void changedUpdate(DocumentEvent e) { refreshRows(); }
         });
         statusFilter.addActionListener(event -> refreshRows());
+        urgencyFilter.addActionListener(event -> refreshRows());
         table.getSelectionModel().addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) updateDetails();
         });
@@ -147,12 +154,16 @@ public final class ComplaintTablePanel extends RoundedPanel {
         controls.setOpaque(false);
         search.setToolTipText("Search by ID, title, category, location, or description");
         Style.field(search);
-        search.setPreferredSize(new Dimension(210, 36));
+        search.setPreferredSize(new Dimension(170, 36));
         statusFilter.setToolTipText("Filter complaints by workflow status");
         Style.combo(statusFilter);
-        statusFilter.setPreferredSize(new Dimension(135, 36));
+        statusFilter.setPreferredSize(new Dimension(120, 36));
+        urgencyFilter.setToolTipText("Filter by current SLA urgency or resolved SLA state");
+        Style.combo(urgencyFilter);
+        urgencyFilter.setPreferredSize(new Dimension(120, 36));
         controls.add(search);
         controls.add(statusFilter);
+        controls.add(urgencyFilter);
         toolbar.add(controls, BorderLayout.EAST);
         return toolbar;
     }
@@ -177,7 +188,8 @@ public final class ComplaintTablePanel extends RoundedPanel {
         result.setDefaultRenderer(String.class, new TableCellRenderers.Standard());
         result.setDefaultRenderer(com.campusfix.model.Severity.class, new TableCellRenderers.Badge());
         result.setDefaultRenderer(com.campusfix.model.Status.class, new TableCellRenderers.Badge());
-        result.setDefaultRenderer(Integer.class, new TableCellRenderers.Priority());
+        result.setDefaultRenderer(PriorityAssessment.class, new TableCellRenderers.Priority());
+        result.setDefaultRenderer(SlaAssessment.class, new TableCellRenderers.Sla());
         result.getColumnModel().getColumn(0).setPreferredWidth(74);
         result.getColumnModel().getColumn(0).setMinWidth(70);
         result.getColumnModel().getColumn(0).setMaxWidth(82);
@@ -186,9 +198,10 @@ public final class ComplaintTablePanel extends RoundedPanel {
         result.getColumnModel().getColumn(3).setPreferredWidth(105);
         result.getColumnModel().getColumn(4).setPreferredWidth(135);
         result.getColumnModel().getColumn(5).setPreferredWidth(90);
-        result.getColumnModel().getColumn(6).setPreferredWidth(115);
+        result.getColumnModel().getColumn(6).setPreferredWidth(145);
         result.getColumnModel().getColumn(7).setPreferredWidth(115);
-        result.getColumnModel().getColumn(8).setPreferredWidth(130);
+        result.getColumnModel().getColumn(8).setPreferredWidth(115);
+        result.getColumnModel().getColumn(9).setPreferredWidth(130);
         return result;
     }
 
@@ -236,17 +249,20 @@ public final class ComplaintTablePanel extends RoundedPanel {
     private void refreshRows() {
         String query = search.getText().trim().toLowerCase(Locale.ROOT);
         String status = String.valueOf(statusFilter.getSelectedItem());
+        String urgency = String.valueOf(urgencyFilter.getSelectedItem());
         filtered = source.stream()
             .filter(complaint -> query.isEmpty() || searchableText(complaint).contains(query))
             .filter(complaint -> status.equals("All statuses")
                 || complaint.getStatus().name().replace('_', ' ').equalsIgnoreCase(status))
+            .filter(complaint -> matchesUrgency(service.slaFor(complaint).status(), urgency))
             .toList();
         model.setRowCount(0);
         for (Complaint complaint : filtered) {
             User technician = directory.byId(complaint.getTechnicianId());
             model.addRow(new Object[]{
                 "#" + complaint.getId(), complaint.getTitle(), friendly(complaint.getCategory().name()),
-                complaint.getSeverity(), complaint.getLocation(), service.score(complaint), complaint.getStatus(),
+                complaint.getSeverity(), complaint.getLocation(), service.priorityFor(complaint),
+                service.slaFor(complaint), complaint.getStatus(),
                 technician == null ? "Not assigned" : technician.getName(), date.format(complaint.getCreatedAt())
             });
         }
@@ -280,7 +296,8 @@ public final class ComplaintTablePanel extends RoundedPanel {
         User student = directory.byId(complaint.getStudentId());
         String reporter = student == null ? complaint.getStudentId() : student.getName();
         details.setText("Ticket #" + complaint.getId() + "  •  Reported by " + reporter
-            + "  •  Priority " + service.score(complaint) + "/100\n"
+            + "  •  Priority " + service.score(complaint) + "/100"
+            + "  •  " + service.slaFor(complaint).displayText() + "\n"
             + complaint.getDescription() + "\n" + complaint.getLocation()
             + "  •  Updated " + date.format(complaint.getUpdatedAt()));
         details.setCaretPosition(0);
@@ -289,6 +306,17 @@ public final class ComplaintTablePanel extends RoundedPanel {
     private void openSelectedDetails() {
         Complaint complaint = selectedComplaint();
         if (complaint != null && openDetailsAction != null) openDetailsAction.accept(complaint);
+    }
+
+    private static boolean matchesUrgency(SlaStatus status, String filter) {
+        return switch (filter) {
+            case "Overdue" -> status == SlaStatus.OVERDUE || status == SlaStatus.RESOLVED_BREACHED;
+            case "Due soon" -> status == SlaStatus.DUE_SOON;
+            case "On track" -> status == SlaStatus.ON_TRACK;
+            case "Resolved" -> status == SlaStatus.RESOLVED_MET
+                || status == SlaStatus.RESOLVED_BREACHED || status == SlaStatus.RESOLVED_UNKNOWN;
+            default -> true;
+        };
     }
 
     private static String friendly(String value) {

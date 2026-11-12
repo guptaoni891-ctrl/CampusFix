@@ -36,10 +36,11 @@ public final class SmokeTest {
             Complaint high=new Complaint(89,"S01","Power outage","No power","Hall B",Category.ELECTRICAL,Severity.CRITICAL,LocalDateTime.now(),Status.OPEN,null,LocalDateTime.now());
             PriorityScorer scorer=new WeightedPriorityScorer();
             require(scorer.score(high,LocalDateTime.now())>scorer.score(low,LocalDateTime.now()),"Priority scoring");
-            Path csv=dir.resolve("export.csv");CsvExporter.export(csv,svc.all(),scorer);
+            Path csv=dir.resolve("export.csv");CsvExporter.export(csv,svc.all(),svc);
             require(Files.readString(csv).contains("Broken light fixture"),"CSV export");
             System.out.println("PASS: login, inheritance, validation, permissions, assignment, transitions, file persistence, priority scoring, CSV export");
             TicketEventTest.run();
+            OperationalIntelligenceTest.run();
         }finally{
             try(var stream=Files.walk(dir)){stream.sorted(java.util.Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(Exception ignored){}});}
         }

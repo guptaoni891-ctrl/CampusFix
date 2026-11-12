@@ -2,6 +2,9 @@ package com.campusfix.ui;
 
 import com.campusfix.model.Severity;
 import com.campusfix.model.Status;
+import com.campusfix.service.PriorityAssessment;
+import com.campusfix.service.SlaAssessment;
+import com.campusfix.service.SlaStatus;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -89,7 +92,10 @@ public final class TableCellRenderers {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
                                                         boolean focused, int row, int column) {
-            score = value instanceof Number number ? number.intValue() : 0;
+            score = value instanceof PriorityAssessment assessment ? assessment.score()
+                : value instanceof Number number ? number.intValue() : 0;
+            setToolTipText(value instanceof PriorityAssessment assessment
+                ? assessment.explanation() : null);
             this.selected = selected;
             this.row = row;
             return this;
@@ -111,6 +117,40 @@ public final class TableCellRenderers {
             g.setColor(Style.TEXT);
             g.drawString(String.valueOf(score), width + 13, y + 5);
             g.dispose();
+        }
+    }
+
+    public static final class Sla extends JPanel implements TableCellRenderer {
+        private final PillLabel pill = new PillLabel();
+
+        public Sla() {
+            super(new GridBagLayout());
+            setOpaque(true);
+            add(pill);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
+                                                        boolean focused, int row, int column) {
+            setBackground(selected ? Style.SELECTION : row % 2 == 0 ? Style.WHITE : Style.ROW_ALT);
+            if (value instanceof SlaAssessment assessment) {
+                pill.configure(assessment.displayText(), slaColor(assessment.status()));
+                setToolTipText("Deadline: " + assessment.deadline() + " · " + assessment.remainingText());
+            } else {
+                pill.configure("Unavailable", Style.MUTED);
+                setToolTipText(null);
+            }
+            return this;
+        }
+
+        private static Color slaColor(SlaStatus status) {
+            return switch (status) {
+                case OVERDUE, RESOLVED_BREACHED -> Style.RED;
+                case DUE_SOON -> Style.AMBER;
+                case ON_TRACK -> Style.BLUE;
+                case RESOLVED_MET -> Style.GREEN;
+                case RESOLVED_UNKNOWN -> Style.MUTED;
+            };
         }
     }
 

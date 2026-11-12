@@ -8,9 +8,10 @@ import com.campusfix.model.Status;
 import com.campusfix.model.Technician;
 import com.campusfix.model.User;
 import com.campusfix.service.ComplaintService;
+import com.campusfix.service.SlaStatus;
+import com.campusfix.service.TechnicianRecommendation;
 import com.campusfix.service.UserDirectory;
 import com.campusfix.service.ValidationException;
-import com.campusfix.service.WeightedPriorityScorer;
 import com.campusfix.util.CsvExporter;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
@@ -32,7 +33,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Predicate;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -431,9 +431,8 @@ public final class CampusFixFrame extends JFrame {
 
     private String overviewInsight() {
         if (currentUser.getRole() == Role.ADMIN) {
-            Technician recommended = service.recommendTechnician();
-            return "Pending queue: " + service.urgentQueue().size() + "  •  Least-loaded technician: "
-                + Optional.ofNullable(recommended).map(Technician::getName).orElse("None available");
+            return "Pending queue: " + service.urgentQueue().size() + "  •  Overdue SLA: "
+                + service.overdueCount(currentUser) + "  •  Recommendations include specialty and workload.";
         }
         if (currentUser.getRole() == Role.TECHNICIAN) {
             long active = service.visibleTo(currentUser).stream().filter(t -> t.getStatus() != Status.RESOLVED).count();
@@ -448,11 +447,17 @@ public final class CampusFixFrame extends JFrame {
         long workflow = tickets.stream().filter(ticket -> ticket.getStatus() == Status.ASSIGNED
             || ticket.getStatus() == Status.IN_PROGRESS).count();
         long resolved = tickets.stream().filter(ticket -> ticket.getStatus() == Status.RESOLVED).count();
+        long overdue = tickets.stream().map(service::slaFor)
+            .filter(sla -> sla.status() == SlaStatus.OVERDUE).count();
         JPanel cards = new JPanel(new GridLayout(1, 4, 13, 0));
         cards.setOpaque(false);
         cards.add(new SummaryCard("Total requests", String.valueOf(tickets.size()), "Visible in your account", Style.BLUE));
         cards.add(new SummaryCard("Open", String.valueOf(open), "Awaiting assignment", Style.AMBER));
-        cards.add(new SummaryCard("In workflow", String.valueOf(workflow), "Assigned or in progress", Style.PURPLE));
+        if (currentUser.getRole() == Role.ADMIN) {
+            cards.add(new SummaryCard("Overdue SLA", String.valueOf(overdue), "Requires attention", Style.RED));
+        } else {
+            cards.add(new SummaryCard("In workflow", String.valueOf(workflow), "Assigned or in progress", Style.PURPLE));
+        }
         cards.add(new SummaryCard("Resolved", String.valueOf(resolved), "Completed requests", Style.GREEN));
         return cards;
     }
@@ -627,7 +632,7 @@ public final class CampusFixFrame extends JFrame {
         RoundedPanel notice = new RoundedPanel(new BorderLayout(12, 0), 16);
         notice.setBackground(new Color(232, 246, 243));
         notice.setBorder(new EmptyBorder(15, 18, 15, 18));
-        JLabel note = Style.label("Workload recommendations are based on active ticket counts.", 12, true);
+        JLabel note = Style.label("Recommendations balance category specialty and active workload; administrators confirm every assignment.", 12, true);
         note.setForeground(Style.TEAL_DARK);
         notice.add(note, BorderLayout.CENTER);
         ModernButton queue = Style.secondary("Open assignment queue");
@@ -736,7 +741,7 @@ public final class CampusFixFrame extends JFrame {
         note.setBorder(new EmptyBorder(16, 18, 16, 18));
         int average = tickets.isEmpty() ? 0 : (int) Math.round(tickets.stream().mapToInt(service::score).average().orElse(0));
         JLabel calculated = Style.label("Average priority score: " + average
-            + "/100  •  Calculated live from severity, category, and waiting time.", 12, true);
+            + "/100  •  Calculated live from severity, category, age, and operational urgency.", 12, true);
         calculated.setForeground(Style.MUTED);
         note.add(calculated, BorderLayout.CENTER);
         note.setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
@@ -815,21 +820,49 @@ public final class CampusFixFrame extends JFrame {
             showError("Select a complaint in the table before assigning a technician.");
             return;
         }
-        List<Technician> technicians = directory.technicians();
-        Technician suggestion = service.recommendTechnician();
+        List<TechnicianRecommendation> recommendations;
+        try {
+            recommendations = service.recommendTechnicians(currentUser, complaint.getId());
+        } catch (ValidationException exception) {
+            showError(exception.getMessage());
+            return;
+        }
+        if (recommendations.isEmpty()) {
+            showError("No technicians are available for assignment.");
+            return;
+        }
+        List<Technician> technicians = recommendations.stream()
+            .map(TechnicianRecommendation::technician).toList();
         javax.swing.JComboBox<Technician> choices = new javax.swing.JComboBox<>(technicians.toArray(new Technician[0]));
-        choices.setSelectedItem(suggestion);
         Style.combo(choices);
+        TechnicianRecommendation first = recommendations.get(0);
         JPanel dialog = dialogForm("Assign ticket #" + complaint.getId(),
-            "Recommended by current active workload: " + Optional.ofNullable(suggestion)
-                .map(Technician::getName).orElse("No recommendation"));
+            first.isSpecialtyMatch() ? "Best match based on specialty and workload"
+                : "No direct specialty match; showing workload-ranked fallbacks");
         dialog.add(choices);
+        dialog.add(Box.createVerticalStrut(10));
+        JTextArea reason = new JTextArea(first.explanation());
+        reason.setEditable(false);
+        reason.setOpaque(false);
+        reason.setLineWrap(true);
+        reason.setWrapStyleWord(true);
+        reason.setFont(Style.font(11, false));
+        reason.setForeground(Style.MUTED);
+        reason.setRows(3);
+        dialog.add(reason);
+        choices.addActionListener(event -> {
+            Technician selected = (Technician) choices.getSelectedItem();
+            recommendations.stream().filter(item -> item.technician().equals(selected)).findFirst()
+                .ifPresent(item -> reason.setText(item.explanation()));
+        });
         int result = JOptionPane.showConfirmDialog(this, dialog, "Assign technician",
             JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result == JOptionPane.OK_OPTION) {
             try {
                 service.assign(currentUser, complaint.getId(), (Technician) choices.getSelectedItem());
-                showSuccess("Technician assigned. Ticket #" + complaint.getId() + " is now ASSIGNED.");
+                Status preservedStatus = service.get(currentUser, complaint.getId()).getStatus();
+                showSuccess("Technician assigned. Ticket #" + complaint.getId() + " remains "
+                    + friendly(preservedStatus.name()) + ".");
             } catch (ValidationException exception) {
                 showError(exception.getMessage());
             } catch (IllegalStateException exception) {
@@ -924,7 +957,7 @@ public final class CampusFixFrame extends JFrame {
         if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
                 Path file = chooser.getSelectedFile().toPath();
-                CsvExporter.export(file, service.visibleTo(currentUser), new WeightedPriorityScorer());
+                CsvExporter.export(file, service.visibleTo(currentUser), service);
                 showSuccess("Complaint data exported to " + file.toAbsolutePath());
             } catch (IOException exception) {
                 showError("Unable to export the CSV file. " + exception.getMessage());

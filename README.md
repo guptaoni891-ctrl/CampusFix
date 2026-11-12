@@ -48,13 +48,14 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 
 - Polished role-specific dashboards with sidebar navigation, responsive cards, status badges, and consistent native Swing styling.
 - Student complaint submission with title, location, description, category, and severity.
-- Administrator assignment of technicians with least-active-ticket recommendation.
+- Explainable administrator technician recommendations using category-specialty fit, active workload, and deterministic tie-breaking; assignment always requires manual confirmation.
 - Live administrator analytics and technician workload views calculated from stored complaint data.
 - Valid state sequence: **OPEN → ASSIGNED → IN_PROGRESS → RESOLVED**.
 - Detailed ticket views with full metadata, status progression, and chronological activity timelines.
 - Authorized student/admin comments, technician progress notes, and mandatory resolution notes.
-- Priority score out of 100, based on severity, issue category, and waiting time.
-- Table search, status filters, resolved-ticket counts, and outstanding-work queue.
+- Explainable priority score out of 100 using severity, category, complaint age, and operational/SLA urgency.
+- Calendar-time SLA monitoring with deadlines, remaining-time badges, due-soon warnings, overdue indicators, and reliable resolved-ticket compliance.
+- Table search, workflow/SLA filters, priority and urgency sorting, overdue counts, resolved-ticket counts, and outstanding-work queue.
 - JDBC SQLite persistence or versioned local-file persistence for tickets and activity events.
 - CSV export, correctly quoting commas, quotes, and line breaks.
 - Exception handling for invalid permissions and invalid workflow transitions.
@@ -65,7 +66,7 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 | --- | --- |
 | Inheritance / polymorphism | Abstract `User` and three derived role classes |
 | Encapsulation | Private model fields with controlled mutation |
-| Interfaces | `TicketRepository`, `TicketEventRepository`, `PriorityScorer`, `TicketListener` |
+| Interfaces | `TicketRepository`, `TicketEventRepository`, `PriorityScorer`, `SlaPolicy`, `SpecializationMatcher`, `TicketListener` |
 | Exceptions | `ValidationException`, persistence exception wrapping |
 | Collections | `ArrayList`, `Map`, `PriorityQueue`, streams |
 | GUI and events | `JFrame`, `JTable`, Swing dialogs, listeners |
@@ -78,13 +79,14 @@ From an IDE, open `pom.xml` as a Maven project and run `com.campusfix.CampusFixA
 src/main/java/com/campusfix/
 ├── CampusFixApp.java
 ├── model/          # User hierarchy, complaints, ticket events, enums
-├── service/        # Authentication, workflow, history authorization, scoring
+├── service/        # Authentication, workflow, authorization, priority/SLA strategies, recommendations
 ├── persistence/    # Ticket/event repositories for file and SQLite modes
 ├── ui/             # Swing dashboard, details dialog, timeline components
 └── util/           # CSV exporter
 src/test/java/com/campusfix/
 ├── SmokeTest.java  # Automated functional tests
 ├── TicketEventTest.java  # Activity, authorization, compatibility, persistence tests
+├── OperationalIntelligenceTest.java  # Priority, SLA, recommendations, reassignment regression
 └── CaptureScreens.java  # Real-GUI screenshot capture utility
 ```
 
@@ -102,15 +104,32 @@ Windows:
 .\test.bat
 ```
 
-The test suite validates login, inheritance, permissions, invalid inputs, ticket creation and assignment, state transitions, comments, progress and resolution notes, chronological event retrieval, malformed-event failures, persistence reloads, legacy `v1` compatibility, priority scoring, and CSV export. SQLite event integration runs automatically when the JDBC driver is on the test classpath; the offline scripts explicitly report it as `NOT VERIFIED` otherwise.
+The test suite validates login, inheritance, permissions, invalid inputs, ticket creation and assignment, state transitions, comments, progress and resolution notes, chronological event retrieval, malformed-event failures, persistence reloads, legacy `v1` compatibility, weighted priority boundaries and aging, SLA deadlines and resolved compliance, specialty/workload recommendations, safe in-progress reassignment, and consistent CSV metrics. SQLite event integration runs automatically when the JDBC driver is on the test classpath; the offline scripts explicitly report it as `NOT VERIFIED` otherwise.
+
+## Explainable operational rules
+
+Priority is deterministic and capped at 100 points. The documented maximum weights are **severity 55**, **category 15**, **age 20**, and **operational urgency 10**. Age adds one point per six complete calendar hours. Operational urgency reflects the workflow state and whether the ticket is due soon or overdue. The ticket dialog and CSV export show the same component explanation calculated by `ComplaintService`.
+
+The default calendar-time SLA policy is:
+
+| Severity | Target | Due-soon window |
+| --- | ---: | ---: |
+| CRITICAL | 4 hours | 1 hour |
+| HIGH | 24 hours | 4 hours |
+| MEDIUM | 72 hours | 12 hours |
+| LOW | 168 hours | 24 hours |
+
+Resolved SLA compliance is calculated only when a persisted `TICKET_RESOLVED` event supplies a reliable timestamp. Legacy resolved complaints without that event display **Compliance unavailable** instead of inventing a completion time.
+
+Technician recommendations first rank direct category-specialty matches, then lower active workload, then technician ID for deterministic ties. If nobody has a direct specialty match, the dialog labels the choices as workload-ranked fallbacks. Administrators still choose and confirm the technician manually. Reassigning an `IN_PROGRESS` ticket preserves its status and writes a reassignment event containing the previous and new technician IDs.
 
 The offline complaint file and activity file are each replaced safely, but updating a complaint and appending its event are two separate writes and are not presented as a cross-file transaction. If the second write fails, the service reports that the complaint changed but its activity could not be recorded.
 
 ## Demonstration in 5–10 minutes
 
 1. Log in as `student`, submit a new maintenance issue, and show its initial OPEN status.
-2. Switch to `admin` to see the new item in the global queue. Explain the priority score.
-3. Select the row, assign a technician, and check the updated status.
+2. Switch to `admin` to see the new item in the global queue. Explain its weighted priority and SLA badge.
+3. Select the row, review the specialty/workload recommendation explanation, and manually confirm a technician.
 4. Open the full ticket view to show its status progression and assignment event.
 5. Switch to `tech` or `tech2`, add a progress note, advance the ticket, and enter the required resolution note.
 6. Switch to `admin` again to review the complete activity timeline, dashboard totals, and CSV export. Reopen the app to demonstrate persistence.
@@ -137,4 +156,4 @@ The report was formatted with Times New Roman 12-point body text, 14-point headi
 
 ### Future improvements
 
-Real sign-up with hashed passwords, institutional authentication, REST API, concurrent multi-file transactions, notification emails, attachments, technician specializations, and JDBC integration in a dependency-enabled CI build.
+Real sign-up with hashed passwords, institutional authentication, REST API, concurrent multi-file transactions, notification emails, attachments, structured technician skill records instead of free-text keyword matching, configurable SLA administration screens, and JDBC integration in a dependency-enabled CI build.
