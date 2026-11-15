@@ -17,6 +17,6 @@ public final class DemoSeeder {
         s.assign(a,a3.getId(),users.technicians().get(1));
         s.assign(a,a6.getId(),users.technicians().get(0));
         s.changeStatus(a,a6.getId(),Status.IN_PROGRESS);
-        s.changeStatus(a,a6.getId(),Status.RESOLVED);
+        s.changeStatus(a,a6.getId(),Status.RESOLVED,"Projector signal cable replaced and tested successfully.");
     }
 }

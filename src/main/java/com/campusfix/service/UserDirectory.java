@@ -2,15 +2,19 @@ package com.campusfix.service;
 import com.campusfix.model.*;
 import java.util.*;
 public final class UserDirectory {
-    private final List<User> users=List.of(
+    private final List<User> users;
+
+    public UserDirectory(){this(List.of(
         new Administrator("A01","Alex Morgan","admin"),
         new Student("S01","Riya Sharma","student"),
         new Student("S02","Omar Khan","student2"),
         new Technician("T01","Samir Patel","tech","Electrical / Internet"),
         new Technician("T02","Sara Ali","tech2","Plumbing / Facilities")
-    );
+    ));}
+
+    public UserDirectory(List<User> users){this.users=List.copyOf(Objects.requireNonNull(users,"users"));}
     public User login(String username,String password){
-        if(!"demo123".equals(password))throw new ValidationException("Invalid username or password.");
+        if(username==null || !"demo123".equals(password))throw new ValidationException("Invalid username or password.");
         return users.stream().filter(u->u.getUsername().equalsIgnoreCase(username.trim())).findFirst()
             .orElseThrow(()->new ValidationException("Invalid username or password."));
     }

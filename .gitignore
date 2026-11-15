@@ -5,8 +5,16 @@ data/*
 *.class
 *.db
 *.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.jar
+*.tmp
 *.tsv
 *.csv
 *.log
 .idea/
 .vscode/
+.env
+.env.*

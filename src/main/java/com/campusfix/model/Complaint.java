@@ -28,7 +28,13 @@ public final class Complaint {
     public LocalDateTime getUpdatedAt(){return updatedAt;}
     public Status getStatus(){return status;}
     public String getTechnicianId(){return technicianId;}
-    public void assignTo(String technicianId){this.technicianId=Objects.requireNonNull(technicianId);this.status=Status.ASSIGNED;this.updatedAt=LocalDateTime.now();}
-    public void moveTo(Status status){this.status=Objects.requireNonNull(status);this.updatedAt=LocalDateTime.now();}
+    public void assignTo(String technicianId){assignTo(technicianId,LocalDateTime.now());}
+    public void assignTo(String technicianId,LocalDateTime timestamp){
+        this.technicianId=Objects.requireNonNull(technicianId);
+        if(this.status==Status.OPEN)this.status=Status.ASSIGNED;
+        this.updatedAt=Objects.requireNonNull(timestamp);
+    }
+    public void moveTo(Status status){moveTo(status,LocalDateTime.now());}
+    public void moveTo(Status status,LocalDateTime timestamp){this.status=Objects.requireNonNull(status);this.updatedAt=Objects.requireNonNull(timestamp);}
     public Complaint copy(){return new Complaint(id,studentId,title,description,location,category,severity,createdAt,status,technicianId,updatedAt);}
 }
