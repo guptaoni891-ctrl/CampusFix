@@ -1,0 +1,26 @@
+# CampusFix Viva Questions
+
+1. **What distinguishes a class from an object?** `Complaint` defines the fields and behavior for a maintenance ticket. Each instance represents one ticket with its own ID, state, timestamps, and assignee.
+2. **Where is inheritance used?** `Student`, `Administrator`, and `Technician` extend abstract `User`, acquiring common identity and display behavior and implementing their own role.
+3. **Where does polymorphism occur?** A variable declared as `User` can refer to any role subtype. Calling `getRole()` dispatches to the concrete implementation. The repository interfaces similarly allow file and JDBC implementations to be substituted.
+4. **Why use an abstract class and an interface?** `User` carries shared state and behavior. `TicketRepository` specifies operations such as finding and saving tickets independently of where the records live.
+5. **What is encapsulated?** `Complaint` keeps its state and assignee private. The model offers controlled mutators, while `ComplaintService` applies permission and transition rules before using them.
+6. **Where does authorization occur?** `ComplaintService` checks the caller's role and ticket relationship. A student sees their own records and a technician their assigned records. Hiding GUI buttons complements these service checks.
+7. **How does reassignment work?** An administrator changes the assignee. The current IN_PROGRESS state stays intact, the event records both IDs, and subsequent permission checks consult the new assignee.
+8. **Why are validation and persistence failures separate?** `ValidationException` communicates invalid input and disallowed actions. Repositories wrap I/O or SQL failures as `IllegalStateException` with a cause. The UI can present a meaningful explanation.
+9. **How does file persistence avoid delimiter issues?** Each field is UTF-8 text encoded to Base64 before fields are joined with tabs. The loader decodes the fields and verifies the v1 marker. Base64 is encoding, so anyone with file access can decode it.
+10. **How does it protect the prior file?** The repository writes a complete temporary sibling, then replaces the destination, preferring an atomic move. Complaint and event writes are separate, so a partial application-level update can still occur.
+11. **What is JDBC?** Java's database API provides `Connection`, `PreparedStatement`, and `ResultSet`. Xerial supplies the SQLite implementation. CampusFix uses parameter binding and closes resources with try-with-resources.
+12. **How does an update avoid adding another ticket row?** `SqliteTicketRepository` binds an INSERT with an `ON CONFLICT(id) DO UPDATE` clause. The same complaint ID stays stable while mutable columns change.
+13. **Why have a second table?** `complaints` stores current ticket state. `complaint_events` stores chronological history by complaint ID and supplies recorded resolution times for analytics.
+14. **Which collections are useful here?** `EnumMap` fits counts by status or category. `TreeMap` collates creation counts by date. Comparators order tickets and candidate technicians. Lists represent ordered snapshots and timelines.
+15. **Explain the priority score.** `WeightedPriorityScorer` combines severity, category, age, and operational urgency. Their maxima are 55, 15, 20, and 10. Each complete six-hour age interval adds one point up to its cap.
+16. **How is SLA compliance computed?** `SlaService` adds a severity-specific duration to creation time and compares the deadline with the clock or recorded resolution time. Unknown resolved outcomes are excluded from analytics denominators.
+17. **Can a repair visit be inferred from the last updated time?** A general update timestamp cannot prove resolution. CampusFix uses a valid persisted resolution event and otherwise reports the duration and compliance as unavailable.
+18. **How are technicians recommended?** `TechnicianRecommendationService` ranks specialty fit, unresolved assignments, then technician ID. The administrator makes the final decision.
+19. **How does a Swing button run application logic?** An ActionListener receives the event on the EDT. The controller collects input, calls a service, and updates the view or presents validation feedback.
+20. **What is SwingWorker used for?** `doInBackground()` computes or loads results away from the EDT. `done()` applies the result or shows an error on the EDT. Table filtering and report export use this pattern.
+21. **How does CSV avoid spreadsheet interpretation?** It prefixes suspicious formula inputs, doubles internal quotes, and quotes fields so commas and line breaks stay inside their cells.
+22. **How was restart behavior tested?** The integration suite creates, assigns, reassigns, and resolves a temporary SQLite ticket. Fresh repository objects open the same database and verify saved state and event chronology.
+23. **What does the analytics filter affect?** The query layer applies authorized scope and current criteria before aggregation. The charts and KPI cards consume that filtered snapshot.
+24. **What is a known deployment limitation?** The demo directory and service locks are scoped to one application process. Concurrent independent processes and production-grade account management would require additional design.

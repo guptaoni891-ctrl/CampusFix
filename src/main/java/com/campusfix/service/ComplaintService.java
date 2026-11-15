@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.stream.Collectors;
 
@@ -79,12 +80,21 @@ public final class ComplaintService {
 
     public SlaAssessment slaFor(Complaint complaint) {
         Objects.requireNonNull(complaint, "complaint");
-        LocalDateTime resolvedAt = eventRepository.findByComplaintId(complaint.getId()).stream()
+        return slaService.assess(complaint, reliableResolutionTimestamp(complaint).orElse(null));
+    }
+
+    public LocalDateTime slaDeadlineFor(Complaint complaint) {
+        return slaService.deadlineFor(complaint);
+    }
+
+    public Optional<LocalDateTime> reliableResolutionTimestamp(Complaint complaint) {
+        Objects.requireNonNull(complaint, "complaint");
+        if (complaint.getStatus() != Status.RESOLVED) return Optional.empty();
+        return eventRepository.findByComplaintId(complaint.getId()).stream()
             .filter(event -> event.getEventType() == TicketEventType.TICKET_RESOLVED)
             .map(TicketEvent::getTimestamp)
-            .min(LocalDateTime::compareTo)
-            .orElse(null);
-        return slaService.assess(complaint, resolvedAt);
+            .filter(timestamp -> !timestamp.isBefore(complaint.getCreatedAt()))
+            .min(LocalDateTime::compareTo);
     }
 
     public List<Complaint> visibleTo(User user) {
@@ -111,7 +121,7 @@ public final class ComplaintService {
         return eventRepository.findByComplaintId(complaintId);
     }
 
-    public Complaint create(User user, String title, String description, String location,
+    public synchronized Complaint create(User user, String title, String description, String location,
                             Category category, Severity severity) {
         requireUser(user);
         if (user.getRole() != Role.STUDENT) {
@@ -139,12 +149,15 @@ public final class ComplaintService {
         return complaint;
     }
 
-    public void assign(User actor, int ticketId, Technician technician) {
+    public synchronized void assign(User actor, int ticketId, Technician technician) {
         requireUser(actor);
         if (actor.getRole() != Role.ADMIN) {
             throw new ValidationException("Only administrators may assign complaints.");
         }
         if (technician == null) throw new ValidationException("Select a technician.");
+        if (!(directory.byId(technician.getId()) instanceof Technician)) {
+            throw new ValidationException("Select a technician from the user directory.");
+        }
         Complaint complaint = requireTicket(ticketId);
         if (complaint.getStatus() == Status.RESOLVED) {
             throw new ValidationException("Resolved complaints cannot be reassigned.");
@@ -164,7 +177,7 @@ public final class ComplaintService {
         changeStatus(actor, ticketId, target, null);
     }
 
-    public void changeStatus(User actor, int ticketId, Status target, String resolutionNote) {
+    public synchronized void changeStatus(User actor, int ticketId, Status target, String resolutionNote) {
         requireUser(actor);
         if (target == null) throw new ValidationException("Select a target status.");
         Complaint complaint = requireTicket(ticketId);
@@ -199,7 +212,7 @@ public final class ComplaintService {
         notifyListeners(complaint, "STATUS_UPDATED");
     }
 
-    public TicketEvent addComment(User actor, int ticketId, String comment) {
+    public synchronized TicketEvent addComment(User actor, int ticketId, String comment) {
         requireUser(actor);
         Complaint complaint = requireTicket(ticketId);
         requireCanView(actor, complaint);
@@ -209,7 +222,7 @@ public final class ComplaintService {
         return event;
     }
 
-    public TicketEvent addProgressNote(User actor, int ticketId, String progressNote) {
+    public synchronized TicketEvent addProgressNote(User actor, int ticketId, String progressNote) {
         requireUser(actor);
         Complaint complaint = requireTicket(ticketId);
         if (actor.getRole() != Role.TECHNICIAN) {

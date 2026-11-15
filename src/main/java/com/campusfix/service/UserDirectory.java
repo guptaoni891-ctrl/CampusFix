@@ -14,7 +14,7 @@ public final class UserDirectory {
 
     public UserDirectory(List<User> users){this.users=List.copyOf(Objects.requireNonNull(users,"users"));}
     public User login(String username,String password){
-        if(!"demo123".equals(password))throw new ValidationException("Invalid username or password.");
+        if(username==null || !"demo123".equals(password))throw new ValidationException("Invalid username or password.");
         return users.stream().filter(u->u.getUsername().equalsIgnoreCase(username.trim())).findFirst()
             .orElseThrow(()->new ValidationException("Invalid username or password."));
     }

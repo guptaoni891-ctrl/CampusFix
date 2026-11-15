@@ -99,11 +99,7 @@ public final class FileTicketEventRepository implements TicketEventRepository {
                     writer.newLine();
                 }
             }
-            try {
-                Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException exception) {
-                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
-            }
+            replaceFile(temporary, path);
             temporary = null;
             events.clear();
             events.putAll(replacement);
@@ -112,6 +108,20 @@ public final class FileTicketEventRepository implements TicketEventRepository {
         } finally {
             if (temporary != null) {
                 try { Files.deleteIfExists(temporary); } catch (IOException ignored) { }
+            }
+        }
+    }
+
+    private static void replaceFile(Path temporary, Path destination) throws IOException {
+        try {
+            Files.move(temporary, destination,
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException atomicFailure) {
+            try {
+                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException fallbackFailure) {
+                fallbackFailure.addSuppressed(atomicFailure);
+                throw fallbackFailure;
             }
         }
     }

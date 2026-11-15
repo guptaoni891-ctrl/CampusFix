@@ -16,10 +16,17 @@ if errorlevel 1 (
 )
 
 if not exist "out" mkdir "out"
-set "SOURCES="
-for /r "src\main\java" %%F in (*.java) do set SOURCES=!SOURCES! "%%F"
-for /r "src\test\java" %%F in (*.java) do set SOURCES=!SOURCES! "%%F"
-"%JAVAC_CMD%" -encoding UTF-8 --release 17 -d "out" !SOURCES!
+> "out\all-sources.txt" (
+    for /r "src\main\java" %%F in (*.java) do (
+        set "SOURCE_FILE=%%F"
+        echo "!SOURCE_FILE:\=/!"
+    )
+    for /r "src\test\java" %%F in (*.java) do (
+        set "SOURCE_FILE=%%F"
+        echo "!SOURCE_FILE:\=/!"
+    )
+)
+"%JAVAC_CMD%" -encoding UTF-8 --release 17 -d "out" @"out\all-sources.txt"
 if errorlevel 1 (
     echo Compilation failed. Confirm JAVA_HOME points to JDK 17 or newer.
     exit /b 1

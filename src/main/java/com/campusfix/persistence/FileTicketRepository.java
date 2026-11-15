@@ -30,10 +30,11 @@ public final class FileTicketRepository implements TicketRepository {
     @Override public synchronized List<Complaint> findAll(){return tickets.values().stream().map(Complaint::copy).toList();}
     @Override public synchronized int nextId(){return tickets.keySet().stream().mapToInt(Integer::intValue).max().orElse(1000)+1;}
     @Override public synchronized void save(Complaint t){
+        Path tmp = null;
         try{
             Files.createDirectories(path.toAbsolutePath().getParent());
             Map<Integer,Complaint> replacement=new LinkedHashMap<>(tickets);replacement.put(t.getId(),t.copy());
-            Path tmp=Files.createTempFile(path.toAbsolutePath().getParent(),"campusfix-",".tmp");
+            tmp=Files.createTempFile(path.toAbsolutePath().getParent(),"campusfix-",".tmp");
             try(BufferedWriter w=Files.newBufferedWriter(tmp)){
                 for(Complaint c:replacement.values()){
                     String[] a={String.valueOf(c.getId()),c.getStudentId(),c.getTitle(),c.getDescription(),c.getLocation(),c.getCategory().name(),c.getSeverity().name(),c.getCreatedAt().toString(),c.getStatus().name(),c.getTechnicianId()==null?"":c.getTechnicianId(),c.getUpdatedAt().toString(),"v1"};
@@ -41,10 +42,21 @@ public final class FileTicketRepository implements TicketRepository {
                     w.write(String.join("\t",a));w.newLine();
                 }
             }
-            try{Files.move(tmp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
-            catch(AtomicMoveNotSupportedException e){Files.move(tmp,path,StandardCopyOption.REPLACE_EXISTING);}
+            replaceFile(tmp,path);
             tickets.clear();tickets.putAll(replacement);
         }catch(IOException e){throw new IllegalStateException("Unable to save complaint file",e);}
+        finally {
+            if (tmp != null) {
+                try { Files.deleteIfExists(tmp); } catch (IOException ignored) { }
+            }
+        }
     }
     @Override public String mode(){return "Local File";}
+    private static void replaceFile(Path temporary,Path destination)throws IOException{
+        try{Files.move(temporary,destination,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
+        catch(IOException atomicFailure){
+            try{Files.move(temporary,destination,StandardCopyOption.REPLACE_EXISTING);}
+            catch(IOException fallbackFailure){fallbackFailure.addSuppressed(atomicFailure);throw fallbackFailure;}
+        }
+    }
 }

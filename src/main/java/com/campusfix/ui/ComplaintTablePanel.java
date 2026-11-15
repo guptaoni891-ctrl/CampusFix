@@ -3,6 +3,9 @@ package com.campusfix.ui;
 import com.campusfix.model.Complaint;
 import com.campusfix.model.User;
 import com.campusfix.service.ComplaintService;
+import com.campusfix.service.ComplaintFilter;
+import com.campusfix.service.ComplaintQueryService;
+import com.campusfix.service.ComplaintSort;
 import com.campusfix.service.PriorityAssessment;
 import com.campusfix.service.SlaAssessment;
 import com.campusfix.service.SlaStatus;
@@ -21,6 +24,9 @@ import java.awt.event.MouseEvent;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Vector;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.IntStream;
 import java.util.Locale;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
@@ -39,21 +45,20 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.SwingWorker;
 
 /** Searchable complaint table with empty state and selection details. */
 public final class ComplaintTablePanel extends RoundedPanel {
     private static final String TABLE_CARD = "table";
     private static final String EMPTY_CARD = "empty";
+    private static final String LOADING_CARD = "loading";
     private final ComplaintService service;
     private final UserDirectory directory;
+    private final ComplaintQueryService queryService;
     private final DateTimeFormatter date = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm");
     private final DefaultTableModel model;
     private final JTable table;
-    private final JTextField search = new PlaceholderTextField("Search complaints…", 17);
-    private final JComboBox<String> statusFilter = new JComboBox<>(
-        new String[]{"All statuses", "Open", "Assigned", "In progress", "Resolved"});
-    private final JComboBox<String> urgencyFilter = new JComboBox<>(
-        new String[]{"All SLA", "Overdue", "Due soon", "On track", "Resolved"});
+    private final ComplaintFilterBar filterBar;
     private final JTextArea details = new JTextArea();
     private final ModernButton openDetails = Style.secondary("Open full ticket");
     private final JPanel tableCards = new JPanel(new CardLayout());
@@ -62,11 +67,14 @@ public final class ComplaintTablePanel extends RoundedPanel {
     private List<Complaint> source = List.of();
     private List<Complaint> filtered = new ArrayList<>();
     private Consumer<Complaint> openDetailsAction;
+    private int filterGeneration;
 
     public ComplaintTablePanel(String title, ComplaintService service, UserDirectory directory) {
         super(new BorderLayout(0, 14), 18);
         this.service = service;
         this.directory = directory;
+        this.queryService = new ComplaintQueryService(service);
+        this.filterBar = new ComplaintFilterBar(directory);
         withShadow();
         setBorder(new EmptyBorder(18, 18, 20, 18));
 
@@ -91,6 +99,7 @@ public final class ComplaintTablePanel extends RoundedPanel {
         tableCards.setOpaque(false);
         tableCards.add(tableScroll, TABLE_CARD);
         tableCards.add(emptyState(), EMPTY_CARD);
+        tableCards.add(loadingState(), LOADING_CARD);
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableCards, detailPanel());
         split.setResizeWeight(.79);
@@ -99,13 +108,7 @@ public final class ComplaintTablePanel extends RoundedPanel {
         split.setOpaque(false);
         add(split, BorderLayout.CENTER);
 
-        search.getDocument().addDocumentListener(new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent e) { refreshRows(); }
-            @Override public void removeUpdate(DocumentEvent e) { refreshRows(); }
-            @Override public void changedUpdate(DocumentEvent e) { refreshRows(); }
-        });
-        statusFilter.addActionListener(event -> refreshRows());
-        urgencyFilter.addActionListener(event -> refreshRows());
+        filterBar.setListener(this::refreshRowsAsync);
         table.getSelectionModel().addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) updateDetails();
         });
@@ -121,7 +124,7 @@ public final class ComplaintTablePanel extends RoundedPanel {
 
     public void setComplaints(List<Complaint> complaints) {
         source = List.copyOf(complaints);
-        refreshRows();
+        refreshRowsAsync(filterBar.currentFilter(), filterBar.currentSort());
     }
 
     public void setOpenDetailsAction(Consumer<Complaint> action) {
@@ -131,14 +134,24 @@ public final class ComplaintTablePanel extends RoundedPanel {
     public Complaint selectedComplaint() {
         int viewRow = table.getSelectedRow();
         if (viewRow < 0) return null;
-        int modelRow = table.convertRowIndexToModel(viewRow);
-        String id = String.valueOf(model.getValueAt(modelRow, 0)).substring(1);
-        int complaintId = Integer.parseInt(id);
-        return filtered.stream().filter(ticket -> ticket.getId() == complaintId).findFirst().orElse(null);
+        return filtered.get(table.convertRowIndexToModel(viewRow));
     }
 
+    public ComplaintFilter currentFilter() {
+        return filterBar.currentFilter();
+    }
+
+    public List<Integer> visibleComplaintIds() {
+        return IntStream.range(0, table.getRowCount())
+            .mapToObj(row -> filtered.get(table.convertRowIndexToModel(row)).getId()).toList();
+    }
+
+    public boolean resultsReady() { return resultsReady; }
+
+    private boolean resultsReady;
+
     private JPanel toolbar(String title) {
-        JPanel toolbar = new JPanel(new BorderLayout(14, 0));
+        JPanel toolbar = new JPanel(new BorderLayout(0, 12));
         toolbar.setOpaque(false);
         JPanel heading = new JPanel();
         heading.setOpaque(false);
@@ -148,23 +161,8 @@ public final class ComplaintTablePanel extends RoundedPanel {
         hint.setForeground(Style.MUTED);
         heading.add(Box.createVerticalStrut(3));
         heading.add(hint);
-        toolbar.add(heading, BorderLayout.WEST);
-
-        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 9, 0));
-        controls.setOpaque(false);
-        search.setToolTipText("Search by ID, title, category, location, or description");
-        Style.field(search);
-        search.setPreferredSize(new Dimension(170, 36));
-        statusFilter.setToolTipText("Filter complaints by workflow status");
-        Style.combo(statusFilter);
-        statusFilter.setPreferredSize(new Dimension(120, 36));
-        urgencyFilter.setToolTipText("Filter by current SLA urgency or resolved SLA state");
-        Style.combo(urgencyFilter);
-        urgencyFilter.setPreferredSize(new Dimension(120, 36));
-        controls.add(search);
-        controls.add(statusFilter);
-        controls.add(urgencyFilter);
-        toolbar.add(controls, BorderLayout.EAST);
+        toolbar.add(heading, BorderLayout.NORTH);
+        toolbar.add(filterBar, BorderLayout.CENTER);
         return toolbar;
     }
 
@@ -225,6 +223,15 @@ public final class ComplaintTablePanel extends RoundedPanel {
         return host;
     }
 
+    private JPanel loadingState() {
+        JPanel host = new JPanel(new GridBagLayout());
+        host.setBackground(Style.WHITE);
+        JLabel label = Style.label("Applying filters…", 13, true);
+        label.setForeground(Style.MUTED);
+        host.add(label);
+        return host;
+    }
+
     private JPanel detailPanel() {
         JPanel panel = new JPanel(new BorderLayout(0, 7));
         panel.setOpaque(false);
@@ -246,26 +253,64 @@ public final class ComplaintTablePanel extends RoundedPanel {
         return panel;
     }
 
-    private void refreshRows() {
-        String query = search.getText().trim().toLowerCase(Locale.ROOT);
-        String status = String.valueOf(statusFilter.getSelectedItem());
-        String urgency = String.valueOf(urgencyFilter.getSelectedItem());
-        filtered = source.stream()
-            .filter(complaint -> query.isEmpty() || searchableText(complaint).contains(query))
-            .filter(complaint -> status.equals("All statuses")
-                || complaint.getStatus().name().replace('_', ' ').equalsIgnoreCase(status))
-            .filter(complaint -> matchesUrgency(service.slaFor(complaint).status(), urgency))
-            .toList();
+    private void refreshRowsAsync(ComplaintFilter filter, ComplaintSort sort) {
+        int generation = ++filterGeneration;
+        resultsReady = false;
+        table.clearSelection();
+        filterBar.setLoading(true);
+        ((CardLayout) tableCards.getLayout()).show(tableCards, LOADING_CARD);
+        List<Complaint> snapshot = List.copyOf(source);
+        new SwingWorker<List<TableRow>, Void>() {
+            @Override protected List<TableRow> doInBackground() {
+                return queryService.apply(snapshot, filter, sort).stream()
+                    .map(ComplaintTablePanel.this::prepareRow).toList();
+            }
+
+            @Override protected void done() {
+                if (generation != filterGeneration) return;
+                try {
+                    updateRows(get());
+                    resultsReady = true;
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    showQueryError("Filtering was interrupted.");
+                } catch (ExecutionException exception) {
+                    showQueryError(exception.getCause().getMessage());
+                } finally {
+                    filterBar.setLoading(false);
+                }
+            }
+        }.execute();
+    }
+
+    private void showQueryError(String message) {
+        table.clearSelection();
+        filtered = List.of();
         model.setRowCount(0);
-        for (Complaint complaint : filtered) {
+        emptyTitle.setText("Unable to filter complaints");
+        emptyMessage.setText(message == null ? "Try again." : message);
+        ((CardLayout) tableCards.getLayout()).show(tableCards, EMPTY_CARD);
+    }
+
+    private record TableRow(Complaint complaint, Object[] values) {}
+
+    private TableRow prepareRow(Complaint complaint) {
             User technician = directory.byId(complaint.getTechnicianId());
-            model.addRow(new Object[]{
+            return new TableRow(complaint, new Object[]{
                 "#" + complaint.getId(), complaint.getTitle(), friendly(complaint.getCategory().name()),
                 complaint.getSeverity(), complaint.getLocation(), service.priorityFor(complaint),
                 service.slaFor(complaint), complaint.getStatus(),
                 technician == null ? "Not assigned" : technician.getName(), date.format(complaint.getCreatedAt())
             });
-        }
+    }
+
+    private void updateRows(List<TableRow> results) {
+        table.clearSelection();
+        filtered = results.stream().map(TableRow::complaint).toList();
+        Vector<Vector> data = model.getDataVector();
+        data.clear();
+        for (TableRow row : results) data.add(new Vector<>(java.util.Arrays.asList(row.values())));
+        model.fireTableDataChanged();
         CardLayout layout = (CardLayout) tableCards.getLayout();
         if (filtered.isEmpty()) {
             emptyTitle.setText(source.isEmpty() ? "Nothing here yet" : "No matching complaints");
@@ -280,11 +325,6 @@ public final class ComplaintTablePanel extends RoundedPanel {
         openDetails.setEnabled(false);
     }
 
-    private String searchableText(Complaint complaint) {
-        return (complaint.getId() + " " + complaint.getTitle() + " " + complaint.getDescription() + " "
-            + complaint.getLocation() + " " + complaint.getCategory()).toLowerCase(Locale.ROOT);
-    }
-
     private void updateDetails() {
         Complaint complaint = selectedComplaint();
         if (complaint == null) {
@@ -295,9 +335,12 @@ public final class ComplaintTablePanel extends RoundedPanel {
         openDetails.setEnabled(true);
         User student = directory.byId(complaint.getStudentId());
         String reporter = student == null ? complaint.getStudentId() : student.getName();
+        int row = table.convertRowIndexToModel(table.getSelectedRow());
+        PriorityAssessment priority = (PriorityAssessment) model.getValueAt(row, 5);
+        SlaAssessment sla = (SlaAssessment) model.getValueAt(row, 6);
         details.setText("Ticket #" + complaint.getId() + "  •  Reported by " + reporter
-            + "  •  Priority " + service.score(complaint) + "/100"
-            + "  •  " + service.slaFor(complaint).displayText() + "\n"
+            + "  •  Priority " + priority.score() + "/100"
+            + "  •  " + sla.displayText() + "\n"
             + complaint.getDescription() + "\n" + complaint.getLocation()
             + "  •  Updated " + date.format(complaint.getUpdatedAt()));
         details.setCaretPosition(0);
@@ -308,16 +351,6 @@ public final class ComplaintTablePanel extends RoundedPanel {
         if (complaint != null && openDetailsAction != null) openDetailsAction.accept(complaint);
     }
 
-    private static boolean matchesUrgency(SlaStatus status, String filter) {
-        return switch (filter) {
-            case "Overdue" -> status == SlaStatus.OVERDUE || status == SlaStatus.RESOLVED_BREACHED;
-            case "Due soon" -> status == SlaStatus.DUE_SOON;
-            case "On track" -> status == SlaStatus.ON_TRACK;
-            case "Resolved" -> status == SlaStatus.RESOLVED_MET
-                || status == SlaStatus.RESOLVED_BREACHED || status == SlaStatus.RESOLVED_UNKNOWN;
-            default -> true;
-        };
-    }
 
     private static String friendly(String value) {
         String lower = value.toLowerCase(Locale.ROOT).replace('_', ' ');

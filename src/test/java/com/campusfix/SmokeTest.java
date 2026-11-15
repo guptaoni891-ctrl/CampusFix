@@ -18,6 +18,7 @@ public final class SmokeTest {
             User student=users.login("student","demo123"), admin=users.login("admin","demo123"), tech=users.login("tech","demo123");
             require(student instanceof Student,"Inheritance: expected Student");
             expectFailure(()->users.login("admin","bad"));
+            expectFailure(()->users.login(null,"demo123"));
             expectFailure(()->svc.create(student,"x","too short","B",Category.ELECTRICAL,Severity.HIGH));
             Complaint first=svc.create(student,"Broken light fixture","Lights are not working in the study area.","Library 201",Category.ELECTRICAL,Severity.HIGH);
             require(first.getStatus()==Status.OPEN,"New tickets must start OPEN");
@@ -41,6 +42,7 @@ public final class SmokeTest {
             System.out.println("PASS: login, inheritance, validation, permissions, assignment, transitions, file persistence, priority scoring, CSV export");
             TicketEventTest.run();
             OperationalIntelligenceTest.run();
+            AnalyticsReportingTest.run();
         }finally{
             try(var stream=Files.walk(dir)){stream.sorted(java.util.Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(Exception ignored){}});}
         }

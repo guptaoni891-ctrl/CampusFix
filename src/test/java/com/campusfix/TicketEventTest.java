@@ -199,9 +199,26 @@ public final class TicketEventTest {
         Complaint complaint = service.create(student, "SQLite event check",
             "This complaint verifies SQLite ticket event persistence.", "Test Lab 1",
             Category.OTHER, Severity.LOW);
-        require(new SqliteTicketEventRepository(database).findByComplaintId(complaint.getId()).size() == 1,
-            "SQLite event must survive repository reload");
-        System.out.println("PASS: SQLite ticket-event integration");
+        User admin = users.login("admin", "demo123");
+        User first = users.login("tech", "demo123");
+        User second = users.login("tech2", "demo123");
+        int id = complaint.getId();
+        service.assign(admin, id, users.technicians().get(0));
+        service.changeStatus(first, id, Status.IN_PROGRESS);
+        service.assign(admin, id, users.technicians().get(1));
+        expectValidation(() -> service.addProgressNote(first, id, "Former assignee"));
+        service.addProgressNote(second, id, "Inspected the affected equipment.");
+        service.changeStatus(second, id, Status.RESOLVED, "Repaired and tested the equipment.");
+        ComplaintService reopened = new ComplaintService(new SqliteTicketRepository(database),
+            new SqliteTicketEventRepository(database), users, new WeightedPriorityScorer(), clock);
+        Complaint saved = reopened.get(student, id);
+        require(saved.getStatus() == Status.RESOLVED && second.getId().equals(saved.getTechnicianId()),
+            "SQLite complaint state and assignee must survive repository reload");
+        List<TicketEvent> history = reopened.eventsFor(student, id);
+        require(history.size() == 6 && isChronological(history)
+            && history.get(5).getEventType() == TicketEventType.TICKET_RESOLVED,
+            "SQLite activity must survive repository reload in chronology");
+        System.out.println("PASS: SQLite schema, workflow, authorization, and reopened complaint/event stores");
     }
 
     private static boolean isChronological(List<TicketEvent> events) {

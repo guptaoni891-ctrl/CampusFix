@@ -79,6 +79,10 @@ At minimum, verification for a change must include compilation of all main and t
 - Perform potentially slow persistence and export work without freezing the Swing event-dispatch thread when the operation can be noticeable.
 - Keep role visibility and authorization separate: hiding a button is not a security check.
 - Enforce ticket-history visibility, comment ownership, technician assignment, and mandatory resolution notes in `ComplaintService`, not in Swing components.
+- Keep filtering and analytics aggregation in `ComplaintQueryService` and `AnalyticsService`; Swing charts must render service results rather than recalculate metrics.
+- Treat missing resolution events as unknown history. Do not include unknown outcomes in duration or SLA-compliance denominators.
+- CSV exports must use the shared priority/SLA services, quote multiline fields, and neutralize spreadsheet-formula prefixes in user-entered text.
+- Run analytics, large in-memory filters, persistence refreshes, and report writes off the Swing event-dispatch thread, then update components in `SwingWorker.done()`.
 - Use prepared statements for all SQL values and transactions for multi-step database changes.
 
 ## Definition of done

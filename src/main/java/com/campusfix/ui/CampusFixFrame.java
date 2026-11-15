@@ -8,11 +8,15 @@ import com.campusfix.model.Status;
 import com.campusfix.model.Technician;
 import com.campusfix.model.User;
 import com.campusfix.service.ComplaintService;
+import com.campusfix.service.AnalyticsService;
+import com.campusfix.service.ComplaintFilter;
+import com.campusfix.service.ComplaintQueryService;
+import com.campusfix.service.ReportService;
+import com.campusfix.service.ReportType;
 import com.campusfix.service.SlaStatus;
 import com.campusfix.service.TechnicianRecommendation;
 import com.campusfix.service.UserDirectory;
 import com.campusfix.service.ValidationException;
-import com.campusfix.util.CsvExporter;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -32,8 +36,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.function.Predicate;
+import java.util.concurrent.ExecutionException;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -43,7 +47,6 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
-import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JTextArea;
@@ -67,6 +70,9 @@ public final class CampusFixFrame extends JFrame {
 
     private final ComplaintService service;
     private final UserDirectory directory;
+    private final ComplaintQueryService queryService;
+    private final AnalyticsService analyticsService;
+    private final ReportService reportService;
     private final LoadingGlassPane loading = new LoadingGlassPane();
     private User currentUser;
     private SidebarPanel sidebar;
@@ -75,11 +81,15 @@ public final class CampusFixFrame extends JFrame {
     private JLabel pageSubtitle;
     private ComplaintTablePanel currentTable;
     private String currentPage = OVERVIEW;
+    private boolean exportRunning;
 
     public CampusFixFrame(ComplaintService service, UserDirectory directory) {
         super("CampusFix | Smart Campus Operations");
         this.service = service;
         this.directory = directory;
+        this.queryService = new ComplaintQueryService(service);
+        this.analyticsService = new AnalyticsService(service, queryService, directory);
+        this.reportService = new ReportService(service, queryService, analyticsService);
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {
@@ -193,8 +203,8 @@ public final class CampusFixFrame extends JFrame {
         form.add(caption);
         form.add(Box.createVerticalStrut(28));
 
-        JTextField username = new JTextField("admin");
-        JPasswordField password = new JPasswordField("demo123");
+        JTextField username = new JTextField();
+        JPasswordField password = new JPasswordField();
         form.add(fieldLabel("Username"));
         form.add(Box.createVerticalStrut(7));
         configureLoginField(username);
@@ -225,7 +235,7 @@ public final class CampusFixFrame extends JFrame {
         accounts.setForeground(Style.MUTED);
         accounts.setAlignmentX(Component.LEFT_ALIGNMENT);
         form.add(accounts);
-        JLabel passwordHint = Style.label("Password for all accounts: demo123", 11, false);
+        JLabel passwordHint = Style.label("See the project README for demo sign-in.", 11, false);
         passwordHint.setForeground(Style.MUTED);
         passwordHint.setAlignmentX(Component.LEFT_ALIGNMENT);
         form.add(passwordHint);
@@ -352,11 +362,12 @@ public final class CampusFixFrame extends JFrame {
             }
             case TECHNICIANS -> {
                 setPageHeading("Technician Management", "Monitor assignment capacity and completed work");
-                content = technicianPage();
+                content = new TechnicianPerformancePanel(analyticsService, currentUser);
             }
             case ANALYTICS -> {
                 setPageHeading("Analytics", "Live operational patterns calculated from complaint data");
-                content = analyticsPage();
+                content = new AnalyticsDashboardPanel(
+                    analyticsService, reportService, directory, currentUser);
             }
             case HISTORY -> {
                 setPageHeading("Work History", "Resolved tickets completed from your assigned queue");
@@ -625,183 +636,6 @@ public final class CampusFixFrame extends JFrame {
         return panel;
     }
 
-    private Component technicianPage() {
-        JPanel content = new JPanel();
-        content.setOpaque(false);
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        RoundedPanel notice = new RoundedPanel(new BorderLayout(12, 0), 16);
-        notice.setBackground(new Color(232, 246, 243));
-        notice.setBorder(new EmptyBorder(15, 18, 15, 18));
-        JLabel note = Style.label("Recommendations balance category specialty and active workload; administrators confirm every assignment.", 12, true);
-        note.setForeground(Style.TEAL_DARK);
-        notice.add(note, BorderLayout.CENTER);
-        ModernButton queue = Style.secondary("Open assignment queue");
-        queue.addActionListener(event -> showPage(COMPLAINTS));
-        notice.add(queue, BorderLayout.EAST);
-        notice.setMaximumSize(new Dimension(Integer.MAX_VALUE, 68));
-        notice.setAlignmentX(Component.LEFT_ALIGNMENT);
-        content.add(notice);
-        content.add(Box.createVerticalStrut(16));
-
-        List<Complaint> all = service.all();
-        for (Technician technician : directory.technicians()) {
-            long active = all.stream().filter(ticket -> technician.getId().equals(ticket.getTechnicianId())
-                && ticket.getStatus() != Status.RESOLVED).count();
-            long resolved = all.stream().filter(ticket -> technician.getId().equals(ticket.getTechnicianId())
-                && ticket.getStatus() == Status.RESOLVED).count();
-            RoundedPanel card = technicianCard(technician, active, resolved);
-            card.setAlignmentX(Component.LEFT_ALIGNMENT);
-            card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 142));
-            content.add(card);
-            content.add(Box.createVerticalStrut(12));
-        }
-        content.add(Box.createVerticalGlue());
-        return scrollable(content);
-    }
-
-    private RoundedPanel technicianCard(Technician technician, long active, long resolved) {
-        RoundedPanel card = new RoundedPanel(new BorderLayout(20, 0), 18).withShadow();
-        card.setBorder(new EmptyBorder(20, 22, 22, 22));
-        card.setPreferredSize(new Dimension(700, 132));
-        JPanel identity = new JPanel(new BorderLayout(14, 0));
-        identity.setOpaque(false);
-        identity.add(new Avatar(initials(technician.getName())), BorderLayout.WEST);
-        JPanel text = new JPanel();
-        text.setOpaque(false);
-        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
-        text.add(Style.label(technician.getName(), 16, true));
-        JLabel specialty = Style.label(technician.getSpecialty(), 11, false);
-        specialty.setForeground(Style.MUTED);
-        text.add(Box.createVerticalStrut(3));
-        text.add(specialty);
-        JLabel id = Style.label("Technician ID · " + technician.getId(), 10, false);
-        id.setForeground(Style.MUTED);
-        text.add(Box.createVerticalStrut(7));
-        text.add(id);
-        identity.add(text, BorderLayout.CENTER);
-        card.add(identity, BorderLayout.WEST);
-
-        JPanel metrics = new JPanel(new GridLayout(1, 2, 28, 0));
-        metrics.setOpaque(false);
-        metrics.add(metric("ACTIVE", String.valueOf(active), Style.AMBER));
-        metrics.add(metric("RESOLVED", String.valueOf(resolved), Style.GREEN));
-        card.add(metrics, BorderLayout.CENTER);
-        JPanel capacity = new JPanel();
-        capacity.setOpaque(false);
-        capacity.setLayout(new BoxLayout(capacity, BoxLayout.Y_AXIS));
-        JLabel label = Style.label(active == 0 ? "Available" : active <= 2 ? "Balanced load" : "High load", 11, true);
-        label.setForeground(active <= 2 ? Style.TEAL_DARK : Style.AMBER);
-        JProgressBar progress = new JProgressBar(0, 5);
-        progress.setValue((int) Math.min(active, 5));
-        progress.setPreferredSize(new Dimension(150, 7));
-        progress.setMaximumSize(new Dimension(150, 7));
-        Style.progress(progress);
-        capacity.add(label);
-        capacity.add(Box.createVerticalStrut(8));
-        capacity.add(progress);
-        card.add(capacity, BorderLayout.EAST);
-        return card;
-    }
-
-    private JPanel metric(String heading, String value, Color color) {
-        JPanel panel = new JPanel();
-        panel.setOpaque(false);
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        JLabel title = Style.label(heading, 9, true);
-        title.setForeground(Style.MUTED);
-        JLabel number = Style.label(value, 24, true);
-        number.setForeground(color.darker());
-        panel.add(title);
-        panel.add(Box.createVerticalStrut(3));
-        panel.add(number);
-        return panel;
-    }
-
-    private Component analyticsPage() {
-        List<Complaint> tickets = service.all();
-        JPanel content = new JPanel();
-        content.setOpaque(false);
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        JPanel cards = summaryCards(tickets);
-        cards.setMaximumSize(new Dimension(Integer.MAX_VALUE, 122));
-        cards.setAlignmentX(Component.LEFT_ALIGNMENT);
-        content.add(cards);
-        content.add(Box.createVerticalStrut(16));
-
-        JPanel columns = new JPanel(new GridLayout(1, 2, 16, 0));
-        columns.setOpaque(false);
-        columns.setAlignmentX(Component.LEFT_ALIGNMENT);
-        columns.setMaximumSize(new Dimension(Integer.MAX_VALUE, 390));
-        columns.add(distributionPanel("Status distribution", statusCounts(tickets), tickets.size()));
-        columns.add(distributionPanel("Category distribution", categoryCounts(tickets), tickets.size()));
-        content.add(columns);
-        content.add(Box.createVerticalStrut(16));
-
-        RoundedPanel note = new RoundedPanel(new BorderLayout(), 16);
-        note.setBorder(new EmptyBorder(16, 18, 16, 18));
-        int average = tickets.isEmpty() ? 0 : (int) Math.round(tickets.stream().mapToInt(service::score).average().orElse(0));
-        JLabel calculated = Style.label("Average priority score: " + average
-            + "/100  •  Calculated live from severity, category, age, and operational urgency.", 12, true);
-        calculated.setForeground(Style.MUTED);
-        note.add(calculated, BorderLayout.CENTER);
-        note.setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
-        note.setAlignmentX(Component.LEFT_ALIGNMENT);
-        content.add(note);
-        content.add(Box.createVerticalGlue());
-        return scrollable(content);
-    }
-
-    private Map<String, Long> statusCounts(List<Complaint> tickets) {
-        Map<String, Long> counts = new java.util.LinkedHashMap<>();
-        for (Status status : Status.values()) {
-            counts.put(friendly(status.name()), tickets.stream().filter(ticket -> ticket.getStatus() == status).count());
-        }
-        return counts;
-    }
-
-    private Map<String, Long> categoryCounts(List<Complaint> tickets) {
-        Map<String, Long> counts = new java.util.LinkedHashMap<>();
-        for (Category category : Category.values()) {
-            counts.put(friendly(category.name()), tickets.stream().filter(ticket -> ticket.getCategory() == category).count());
-        }
-        return counts;
-    }
-
-    private RoundedPanel distributionPanel(String title, Map<String, Long> values, int total) {
-        RoundedPanel panel = new RoundedPanel(18).withShadow();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(new EmptyBorder(20, 22, 22, 22));
-        panel.add(Style.label(title, 16, true));
-        JLabel hint = Style.label("Live count and share of all complaints", 11, false);
-        hint.setForeground(Style.MUTED);
-        panel.add(Box.createVerticalStrut(3));
-        panel.add(hint);
-        panel.add(Box.createVerticalStrut(20));
-        int index = 0;
-        Color[] colors = {Style.TEAL, Style.BLUE, Style.PURPLE, Style.AMBER, Style.GREEN, Style.RED};
-        for (Map.Entry<String, Long> entry : values.entrySet()) {
-            JPanel heading = new JPanel(new BorderLayout());
-            heading.setOpaque(false);
-            heading.add(Style.label(entry.getKey(), 11, true), BorderLayout.WEST);
-            JLabel value = Style.label(entry.getValue() + "  ·  "
-                + (total == 0 ? 0 : entry.getValue() * 100 / total) + "%", 10, false);
-            value.setForeground(Style.MUTED);
-            heading.add(value, BorderLayout.EAST);
-            panel.add(heading);
-            panel.add(Box.createVerticalStrut(5));
-            JProgressBar progress = new JProgressBar(0, Math.max(total, 1));
-            progress.setValue(entry.getValue().intValue());
-            progress.setForeground(colors[index++ % colors.length]);
-            progress.setBackground(new Color(232, 238, 242));
-            progress.setBorderPainted(false);
-            progress.setMaximumSize(new Dimension(Integer.MAX_VALUE, 7));
-            progress.setPreferredSize(new Dimension(300, 7));
-            panel.add(progress);
-            panel.add(Box.createVerticalStrut(13));
-        }
-        return panel;
-    }
-
     private JPanel scrollable(Component content) {
         JPanel host = new JPanel(new BorderLayout());
         host.setOpaque(false);
@@ -835,10 +669,11 @@ public final class CampusFixFrame extends JFrame {
             .map(TechnicianRecommendation::technician).toList();
         javax.swing.JComboBox<Technician> choices = new javax.swing.JComboBox<>(technicians.toArray(new Technician[0]));
         Style.combo(choices);
+        choices.setAlignmentX(Component.LEFT_ALIGNMENT);
         TechnicianRecommendation first = recommendations.get(0);
         JPanel dialog = dialogForm("Assign ticket #" + complaint.getId(),
-            first.isSpecialtyMatch() ? "Best match based on specialty and workload"
-                : "No direct specialty match; showing workload-ranked fallbacks");
+            first.isSpecialtyMatch() ? "Specialty match and active workload"
+                : "No specialty match. Ranked by workload.");
         dialog.add(choices);
         dialog.add(Box.createVerticalStrut(10));
         JTextArea reason = new JTextArea(first.explanation());
@@ -849,6 +684,7 @@ public final class CampusFixFrame extends JFrame {
         reason.setFont(Style.font(11, false));
         reason.setForeground(Style.MUTED);
         reason.setRows(3);
+        reason.setAlignmentX(Component.LEFT_ALIGNMENT);
         dialog.add(reason);
         choices.addActionListener(event -> {
             Technician selected = (Technician) choices.getSelectedItem();
@@ -943,6 +779,11 @@ public final class CampusFixFrame extends JFrame {
         JLabel hint = Style.label(caption, 11, false);
         hint.setForeground(Style.MUTED);
         hint.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Dimension hintSize = hint.getPreferredSize();
+        Dimension captionSize = new Dimension(hintSize.width + 24, hintSize.height);
+        hint.setPreferredSize(captionSize);
+        hint.setMinimumSize(captionSize);
+        hint.setMaximumSize(captionSize);
         panel.add(heading);
         panel.add(Box.createVerticalStrut(5));
         panel.add(hint);
@@ -951,17 +792,70 @@ public final class CampusFixFrame extends JFrame {
     }
 
     private void exportCsv() {
+        if (exportRunning) return;
+        ReportType[] available = currentUser.getRole() == Role.ADMIN
+            ? ReportType.values()
+            : new ReportType[]{ReportType.ALL_COMPLAINTS, ReportType.FILTERED_COMPLAINTS};
+        javax.swing.JComboBox<ReportType> reportChoice = new javax.swing.JComboBox<>(available);
+        if (currentTable != null) reportChoice.setSelectedItem(ReportType.FILTERED_COMPLAINTS);
+        Style.combo(reportChoice);
+        reportChoice.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JPanel selection = dialogForm("Choose a CSV report",
+            "Filtered exports follow the table.");
+        selection.add(reportChoice);
+        int selectionResult = JOptionPane.showConfirmDialog(this, selection, "Export report",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (selectionResult != JOptionPane.OK_OPTION) return;
+        ReportType reportType = (ReportType) reportChoice.getSelectedItem();
+        User actor = currentUser;
+        if (reportType == ReportType.FILTERED_COMPLAINTS
+            && (currentTable == null || !currentTable.resultsReady())) {
+            showError("Apply the filters and wait for the table before exporting.");
+            return;
+        }
+        List<Integer> selectedIds = currentTable == null || reportType != ReportType.FILTERED_COMPLAINTS
+            ? List.of() : currentTable.visibleComplaintIds();
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Export CampusFix complaints");
-        chooser.setSelectedFile(new java.io.File("campusfix_export.csv"));
+        chooser.setSelectedFile(new java.io.File(switch (reportType) {
+            case ALL_COMPLAINTS -> "campusfix_all_complaints.csv";
+            case FILTERED_COMPLAINTS -> "campusfix_filtered_complaints.csv";
+            case SLA_SUMMARY -> "campusfix_sla_summary.csv";
+            case TECHNICIAN_SUMMARY -> "campusfix_technician_summary.csv";
+        }));
         if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-            try {
-                Path file = chooser.getSelectedFile().toPath();
-                CsvExporter.export(file, service.visibleTo(currentUser), service);
-                showSuccess("Complaint data exported to " + file.toAbsolutePath());
-            } catch (IOException exception) {
-                showError("Unable to export the CSV file. " + exception.getMessage());
-            }
+            Path file = chooser.getSelectedFile().toPath();
+            ComplaintFilter filter = currentTable == null
+                ? ComplaintFilter.none() : currentTable.currentFilter();
+            exportRunning = true;
+            loading.showMessage("Exporting report…");
+            new SwingWorker<Void, Void>() {
+                @Override protected Void doInBackground() throws IOException {
+                    if (reportType == ReportType.FILTERED_COMPLAINTS) {
+                        reportService.exportVisibleSelection(actor, file, selectedIds);
+                    } else {
+                        reportService.export(actor, file, reportType, filter);
+                    }
+                    return null;
+                }
+
+                @Override protected void done() {
+                    try {
+                        get();
+                        showSuccess("Report exported to " + file.toAbsolutePath());
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        showError("The export was interrupted.");
+                    } catch (ExecutionException exception) {
+                        Throwable cause = exception.getCause();
+                        showError("Unable to export the CSV file. "
+                            + (cause == null ? exception.getMessage() : cause.getMessage()));
+                    } finally {
+                        exportRunning = false;
+                        loading.hideOverlay();
+                    }
+                }
+            }.execute();
         }
     }
 

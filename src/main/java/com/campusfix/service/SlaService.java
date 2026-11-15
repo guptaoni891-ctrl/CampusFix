@@ -18,8 +18,7 @@ public final class SlaService {
     }
 
     public SlaAssessment assess(Complaint complaint, LocalDateTime reliableResolvedAt) {
-        Objects.requireNonNull(complaint, "complaint");
-        LocalDateTime deadline = complaint.getCreatedAt().plus(policy.targetFor(complaint.getSeverity()));
+        LocalDateTime deadline = deadlineFor(complaint);
         if (complaint.getStatus() == Status.RESOLVED) {
             if (reliableResolvedAt == null) {
                 return new SlaAssessment(deadline, null, SlaStatus.RESOLVED_UNKNOWN, null);
@@ -39,5 +38,10 @@ public final class SlaService {
             status = SlaStatus.ON_TRACK;
         }
         return new SlaAssessment(deadline, remaining, status, null);
+    }
+
+    public LocalDateTime deadlineFor(Complaint complaint) {
+        Objects.requireNonNull(complaint, "complaint");
+        return complaint.getCreatedAt().plus(policy.targetFor(complaint.getSeverity()));
     }
 }
